@@ -99,3 +99,13 @@ export interface ContinueWatchingItem {
   position: number
   updated_at: string
 }
+
+export interface TimestampTag {
+  id: string
+  media_id: string
+  tag_id: string
+  start_time: number
+  end_time: number | null
+  tag_name: string
+  category_name: string
+}
