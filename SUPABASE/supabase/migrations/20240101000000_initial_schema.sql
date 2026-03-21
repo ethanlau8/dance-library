@@ -138,6 +138,31 @@ CREATE TRIGGER on_auth_user_created
 -- Helper function to check permission flag
 -- (Used inline in policies for clarity; no separate function needed)
 
+-- Helper: check if the current user has a specific permission flag.
+-- SECURITY DEFINER bypasses RLS to avoid infinite recursion when profiles
+-- policies need to check the requesting user's role.
+CREATE OR REPLACE FUNCTION public.user_has_permission(permission TEXT)
+RETURNS BOOLEAN AS $$
+  SELECT COALESCE(
+    (SELECT
+      CASE permission
+        WHEN 'view_media' THEN r.view_media
+        WHEN 'upload_media' THEN r.upload_media
+        WHEN 'edit_metadata' THEN r.edit_metadata
+        WHEN 'delete_media' THEN r.delete_media
+        WHEN 'manage_roles' THEN r.manage_roles
+        WHEN 'create_tags' THEN r.create_tags
+        WHEN 'manage_folders' THEN r.manage_folders
+        ELSE false
+      END
+     FROM public.profiles p
+     JOIN public.roles r ON p.role_id = r.id
+     WHERE p.id = auth.uid()
+    ),
+    false
+  )
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
+
 -- Last-Owner protection helper
 CREATE OR REPLACE FUNCTION public.is_last_owner(target_profile_id UUID)
 RETURNS BOOLEAN AS $$
@@ -160,32 +185,17 @@ CREATE POLICY "roles_select_authenticated"
 CREATE POLICY "roles_insert_manage_roles"
   ON public.roles FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_roles = true
-    )
-  );
+  WITH CHECK ((SELECT public.user_has_permission('manage_roles')));
 
 CREATE POLICY "roles_update_manage_roles"
   ON public.roles FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_roles = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('manage_roles')));
 
 CREATE POLICY "roles_delete_manage_roles"
   ON public.roles FOR DELETE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_roles = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('manage_roles')));
 
 -- -----------------------------------------------------------------------------
 -- RLS: profiles
@@ -198,10 +208,7 @@ CREATE POLICY "profiles_select"
   TO authenticated
   USING (
     auth.uid() = id
-    OR EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_roles = true
-    )
+    OR (SELECT public.user_has_permission('manage_roles'))
   );
 
 -- UPDATE own display_name
@@ -217,15 +224,12 @@ CREATE POLICY "profiles_update_role_id"
   TO authenticated
   USING (
     id != auth.uid()
-    AND EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_roles = true
-    )
+    AND (SELECT public.user_has_permission('manage_roles'))
     AND NOT (
       -- Block if target is currently an Owner and is the last one
       EXISTS (
-        SELECT 1 FROM public.profiles p2 JOIN public.roles r2 ON p2.role_id = r2.id
-        WHERE p2.id = profiles.id AND r2.name = 'Owner'
+        SELECT 1 FROM public.roles r2
+        WHERE r2.id = profiles.role_id AND r2.name = 'Owner'
       )
       AND public.is_last_owner(profiles.id)
     )
@@ -239,42 +243,24 @@ ALTER TABLE public.media ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "media_select"
   ON public.media FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.view_media = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('view_media')));
 
 CREATE POLICY "media_insert"
   ON public.media FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.upload_media = true
-    )
-  );
+  WITH CHECK ((SELECT public.user_has_permission('upload_media')));
 
 CREATE POLICY "media_update"
   ON public.media FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.edit_metadata = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('edit_metadata')));
 
 CREATE POLICY "media_delete"
   ON public.media FOR DELETE
   TO authenticated
   USING (
     uploaded_by = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.delete_media = true
-    )
+    OR (SELECT public.user_has_permission('delete_media'))
   );
 
 -- -----------------------------------------------------------------------------
@@ -285,22 +271,12 @@ ALTER TABLE public.tag_categories ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "tag_categories_select"
   ON public.tag_categories FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.view_media = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('view_media')));
 
 CREATE POLICY "tag_categories_insert"
   ON public.tag_categories FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.create_tags = true
-    )
-  );
+  WITH CHECK ((SELECT public.user_has_permission('create_tags')));
 
 -- -----------------------------------------------------------------------------
 -- RLS: tags
@@ -310,32 +286,17 @@ ALTER TABLE public.tags ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "tags_select"
   ON public.tags FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.view_media = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('view_media')));
 
 CREATE POLICY "tags_insert"
   ON public.tags FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.create_tags = true
-    )
-  );
+  WITH CHECK ((SELECT public.user_has_permission('create_tags')));
 
 CREATE POLICY "tags_update_is_folder"
   ON public.tags FOR UPDATE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.manage_folders = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('manage_folders')));
 
 -- -----------------------------------------------------------------------------
 -- RLS: media_tags
@@ -345,32 +306,17 @@ ALTER TABLE public.media_tags ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "media_tags_select"
   ON public.media_tags FOR SELECT
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.view_media = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('view_media')));
 
 CREATE POLICY "media_tags_insert"
   ON public.media_tags FOR INSERT
   TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.edit_metadata = true
-    )
-  );
+  WITH CHECK ((SELECT public.user_has_permission('edit_metadata')));
 
 CREATE POLICY "media_tags_delete"
   ON public.media_tags FOR DELETE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.profiles p JOIN public.roles r ON p.role_id = r.id
-      WHERE p.id = auth.uid() AND r.edit_metadata = true
-    )
-  );
+  USING ((SELECT public.user_has_permission('edit_metadata')));
 
 -- -----------------------------------------------------------------------------
 -- RLS: watch_progress

@@ -80,3 +80,22 @@ export interface Permissions {
   create_tags: boolean
   manage_folders: boolean
 }
+
+export interface MediaWithTags extends Media {
+  tags?: Tag[]
+}
+
+export interface FolderWithCount {
+  id: string
+  name: string
+  video_count: number
+}
+
+export interface ContinueWatchingItem {
+  id: string
+  title: string
+  thumbnail_path: string | null
+  duration: number | null
+  position: number
+  updated_at: string
+}
