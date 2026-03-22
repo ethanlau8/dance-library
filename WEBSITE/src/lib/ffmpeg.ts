@@ -5,7 +5,7 @@
 
 export async function generateThumbnail(
   file: File
-): Promise<{ blob: Blob; dataUrl: string; duration: number | null }> {
+): Promise<{ blob: Blob; dataUrl: string; duration: number | null; width: number | null; height: number | null }> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const video = document.createElement('video')
@@ -19,6 +19,8 @@ export async function generateThumbnail(
 
     function captureFrame() {
       const dur = isFinite(video.duration) ? video.duration : null
+      const w = video.videoWidth || null
+      const h = video.videoHeight || null
 
       const canvas = document.createElement('canvas')
       const targetWidth = 640
@@ -43,7 +45,7 @@ export async function generateThumbnail(
             return
           }
           const dataUrl = URL.createObjectURL(blob)
-          resolve({ blob, dataUrl, duration: dur })
+          resolve({ blob, dataUrl, duration: dur, width: w, height: h })
         },
         'image/webp',
         0.8

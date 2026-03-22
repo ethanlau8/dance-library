@@ -66,6 +66,10 @@ Deno.serve(async (req: Request) => {
     duration?: number;
     recorded_at?: string | null;
     tag_ids?: string[];
+    original_filename?: string;
+    file_size_bytes?: number;
+    mime_type?: string;
+    resolution?: string;
   };
   try {
     body = await req.json();
@@ -76,7 +80,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { title, description, media_type, storage_path, thumbnail_path, duration, recorded_at, tag_ids } = body;
+  const { title, description, media_type, storage_path, thumbnail_path, duration, recorded_at, tag_ids, original_filename, file_size_bytes, mime_type, resolution } = body;
 
   if (!title || !media_type || !storage_path) {
     return new Response(JSON.stringify({ error: "title, media_type, and storage_path are required" }), {
@@ -96,6 +100,10 @@ Deno.serve(async (req: Request) => {
       thumbnail_path: thumbnail_path ?? null,
       duration: duration ?? null,
       recorded_at: recorded_at ?? null,
+      original_filename: original_filename ?? null,
+      file_size_bytes: file_size_bytes ?? null,
+      mime_type: mime_type ?? null,
+      resolution: resolution ?? null,
       uploaded_by: user.id,
     })
     .select("id")

@@ -649,11 +649,27 @@ export default function VideoDetailPage() {
     if (!id) return
     setDeleting(true)
     try {
-      const { error: delErr } = await supabase
-        .from('media')
-        .delete()
-        .eq('id', id)
-      if (delErr) throw delErr
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      if (!token) throw new Error('Not authenticated')
+
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/delete-media`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ media_id: id }),
+        }
+      )
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Delete failed with status ${res.status}`)
+      }
+
       navigate('/')
     } catch (err) {
       console.error('Delete error:', err)
