@@ -138,15 +138,15 @@ export default function FilterPanel({
 
       {/* Bottom sheet */}
       <div
-        className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl bg-white shadow-xl transition-transform duration-300"
+        className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl bg-white shadow-xl transition-transform duration-300 lg:inset-0 lg:m-auto lg:h-fit lg:max-w-lg lg:rounded-2xl"
       >
-        {/* Handle bar */}
-        <div className="flex justify-center py-2">
+        {/* Handle bar (mobile only) */}
+        <div className="flex justify-center py-2 lg:hidden">
           <div className="h-1 w-10 rounded-full bg-gray-300" />
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 pb-3">
+        <div className="flex items-center justify-between px-4 pb-3 lg:pt-4">
           <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
           <button
             onClick={handleClear}

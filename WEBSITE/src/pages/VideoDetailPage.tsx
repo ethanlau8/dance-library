@@ -97,6 +97,18 @@ export default function VideoDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
+  // Desktop detection for side-by-side layout
+  const [isDesktop, setIsDesktop] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches
+  )
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
   // --- Fetch data ---
   const fetchAll = useCallback(async () => {
     if (!id || !user) return
@@ -723,302 +735,312 @@ export default function VideoDetailPage() {
         </div>
       )}
 
-      {/* Video player */}
-      {videoUrl && initialPosition !== null ? (
-        <div className="relative">
-          <VideoPlayer
-            ref={videoRef}
-            src={videoUrl}
-            poster={thumbnailUrl(media?.thumbnail_path)}
-            initialPosition={initialPosition}
-            timestampMarkers={displayTimestamps.map((t) => ({ time: t.start_time }))}
-            onTimeUpdate={handleTimeUpdate}
-            onPause={handlePause}
-          />
+      {/* Side-by-side layout on desktop */}
+      <div className="lg:grid lg:grid-cols-[1fr_420px] lg:gap-6 lg:px-4">
+        {/* Left column: Video player */}
+        <div className="lg:sticky lg:top-14 lg:self-start">
+          {/* Video player */}
+          {videoUrl && initialPosition !== null ? (
+            <div className="relative">
+              <VideoPlayer
+                ref={videoRef}
+                src={videoUrl}
+                poster={thumbnailUrl(media?.thumbnail_path)}
+                initialPosition={initialPosition}
+                timestampMarkers={displayTimestamps.map((t) => ({ time: t.start_time }))}
+                onTimeUpdate={handleTimeUpdate}
+                onPause={handlePause}
+                disableSticky={isDesktop}
+              />
 
-          {/* Timestamp seek overlay */}
-          {isEditMode && tsCreationStep !== 'idle' && (
-            <div className="bg-black/70 px-4 py-3 text-center">
-              {tsCreationStep === 'set-start' && (
+              {/* Timestamp seek overlay */}
+              {isEditMode && tsCreationStep !== 'idle' && (
+                <div className="bg-black/70 px-4 py-3 text-center">
+                  {tsCreationStep === 'set-start' && (
+                    <>
+                      <p className="mb-2 text-sm text-white">
+                        Play or scrub to the start of the moment
+                      </p>
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => setTsCreationStep('idle')}
+                          className="rounded-lg border border-white/30 px-4 py-2 text-sm text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSetStart}
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+                        >
+                          Set Start
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {tsCreationStep === 'set-end' && (
+                    <>
+                      <p className="mb-1 text-xs text-white/60">
+                        Start: {formatTime(tsNewStart)}
+                      </p>
+                      <p className="mb-2 text-sm text-white">
+                        Now scrub to the end of the moment
+                      </p>
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => setTsCreationStep('idle')}
+                          className="rounded-lg border border-white/30 px-4 py-2 text-sm text-white"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSetEnd}
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+                        >
+                          Set End
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : !error ? (
+            <div className="flex aspect-video items-center justify-center bg-gray-200">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
+            </div>
+          ) : null}
+        </div>
+
+        {/* Right column: Metadata & edit controls */}
+        <div>
+          {/* Metadata */}
+          {media && (
+            <div className="px-4 pt-4 lg:px-0">
+              {isEditMode ? (
                 <>
-                  <p className="mb-2 text-sm text-white">
-                    Play or scrub to the start of the moment
-                  </p>
-                  <div className="flex justify-center gap-2">
-                    <button
-                      onClick={() => setTsCreationStep('idle')}
-                      className="rounded-lg border border-white/30 px-4 py-2 text-sm text-white"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSetStart}
-                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
-                    >
-                      Set Start
-                    </button>
+                  {/* Editable title */}
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Title"
+                    className="w-full text-xl font-bold text-gray-900 border-b border-gray-200 pb-1 focus:border-blue-500 focus:outline-none bg-transparent"
+                  />
+
+                  {/* Editable recorded date */}
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Recorded Date
+                    </label>
+                    <input
+                      type="date"
+                      value={editRecordedDate}
+                      onChange={(e) => setEditRecordedDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Editable description */}
+                  <div className="mt-2">
+                    <label className="block text-xs font-medium text-gray-500 mb-1">
+                      Description
+                    </label>
+                    <textarea
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      placeholder="Optional description"
+                      rows={3}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                      style={{ resize: 'vertical' }}
+                    />
                   </div>
                 </>
-              )}
-              {tsCreationStep === 'set-end' && (
+              ) : (
                 <>
-                  <p className="mb-1 text-xs text-white/60">
-                    Start: {formatTime(tsNewStart)}
+                  <h1 className="text-xl font-bold text-gray-900">{media.title}</h1>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {formatDate(media.recorded_at || media.created_at)}
+                    {media.duration != null && ` · ${formatTime(media.duration)}`}
                   </p>
-                  <p className="mb-2 text-sm text-white">
-                    Now scrub to the end of the moment
-                  </p>
-                  <div className="flex justify-center gap-2">
-                    <button
-                      onClick={() => setTsCreationStep('idle')}
-                      className="rounded-lg border border-white/30 px-4 py-2 text-sm text-white"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSetEnd}
-                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white"
-                    >
-                      Set End
-                    </button>
-                  </div>
+                  {media.description && (
+                    <p className="mt-2 text-sm text-gray-700 whitespace-pre-line">{media.description}</p>
+                  )}
                 </>
               )}
             </div>
           )}
-        </div>
-      ) : !error ? (
-        <div className="flex aspect-video items-center justify-center bg-gray-200">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
-        </div>
-      ) : null}
 
-      {/* Metadata */}
-      {media && (
-        <div className="px-4 pt-4">
+          {/* Video-level tags */}
           {isEditMode ? (
-            <>
-              {/* Editable title */}
-              <input
-                type="text"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="Title"
-                className="w-full text-xl font-bold text-gray-900 border-b border-gray-200 pb-1 focus:border-blue-500 focus:outline-none bg-transparent"
-              />
-
-              {/* Editable recorded date */}
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Recorded Date
-                </label>
-                <input
-                  type="date"
-                  value={editRecordedDate}
-                  onChange={(e) => setEditRecordedDate(e.target.value)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Editable description */}
-              <div className="mt-2">
-                <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Description
-                </label>
-                <textarea
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  placeholder="Optional description"
-                  rows={3}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <h1 className="text-xl font-bold text-gray-900">{media.title}</h1>
-              <p className="mt-1 text-sm text-gray-500">
-                {formatDate(media.recorded_at || media.created_at)}
-                {media.duration != null && ` · ${formatTime(media.duration)}`}
-              </p>
-              {media.description && (
-                <p className="mt-2 text-sm text-gray-700 whitespace-pre-line">{media.description}</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Video-level tags */}
-      {isEditMode ? (
-        <div className="mt-3 px-4">
-          <label className="block text-xs font-medium text-gray-500 mb-1.5">
-            Tags
-          </label>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {editTags.map((tag) => (
-              <span
-                key={tag.id}
-                className="inline-flex items-center gap-1 rounded-full bg-gray-100 py-1 pl-2.5 pr-1.5 text-xs text-gray-600"
-              >
-                {tag.name}
-                <button
-                  onClick={() => removeEditTag(tag.id)}
-                  className="ml-0.5 text-gray-400 hover:text-gray-600"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-            <button
-              onClick={() => setShowTagPicker(true)}
-              className="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-xs text-gray-500 hover:border-gray-400"
-            >
-              + Add Tag
-            </button>
-          </div>
-        </div>
-      ) : videoLevelTags.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5 px-4">
-          {videoLevelTags.map((tag) => (
-            <button
-              key={tag.id}
-              onClick={() => navigate(`/?tag=${tag.id}`)}
-              className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
-            >
-              {tag.name}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Timestamp tags */}
-      {(displayTimestamps.length > 0 || isEditMode) && (
-        <section className="mt-6 px-4">
-          <div className="mb-3 border-t border-gray-200" />
-          <h2 className="mb-2 text-sm font-semibold text-gray-700">Timestamps</h2>
-          <div className="flex flex-col gap-0.5">
-            {displayTimestamps.map((ts) => (
-              <div
-                key={ts.id}
-                className={`flex items-center gap-2 rounded px-2 py-2 text-sm transition-colors ${
-                  activeTimestampId === ts.id
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                <button
-                  onClick={() => seekTo(ts.start_time)}
-                  className="flex flex-1 items-center gap-3 text-left"
-                >
-                  <span className="shrink-0 text-xs text-gray-400">▶</span>
-                  <span className="shrink-0 font-mono text-xs text-gray-500">
-                    {formatTime(ts.start_time)}
-                    {ts.end_time !== null && ` - ${formatTime(ts.end_time)}`}
+            <div className="mt-3 px-4 lg:px-0">
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">
+                Tags
+              </label>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {editTags.map((tag) => (
+                  <span
+                    key={tag.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-100 py-1 pl-2.5 pr-1.5 text-xs text-gray-600"
+                  >
+                    {tag.name}
+                    <button
+                      onClick={() => removeEditTag(tag.id)}
+                      className="ml-0.5 text-gray-400 hover:text-gray-600"
+                    >
+                      ×
+                    </button>
                   </span>
-                  <span>{ts.tag_name}</span>
+                ))}
+                <button
+                  onClick={() => setShowTagPicker(true)}
+                  className="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-xs text-gray-500 hover:border-gray-400"
+                >
+                  + Add Tag
                 </button>
-                {isEditMode && (
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      onClick={() => openEditTimestamp(ts)}
-                      className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
-                    >
-                      edit
-                    </button>
-                    <button
-                      onClick={() => removeTimestamp(ts.id)}
-                      className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
-                    >
-                      del
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {isEditMode && tsCreationStep === 'idle' && (
-            <button
-              onClick={startAddTimestamp}
-              className="mt-2 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:border-gray-400 w-full text-left"
-            >
-              + Add timestamp tag
-            </button>
-          )}
-        </section>
-      )}
-
-      {/* Replace Video File (edit mode only) */}
-      {isEditMode && (
-        <section className="mt-6 px-4">
-          <div className="mb-3 border-t border-gray-200" />
-          <h2 className="mb-2 text-sm font-semibold text-gray-700">Replace Video File</h2>
-
-          {replacing ? (
-            <div>
-              <div className="mb-1 flex justify-between text-xs text-gray-500">
-                <span>Uploading replacement…</span>
-                <span>{replaceProgress}%</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-gray-200">
-                <div
-                  className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                  style={{ width: `${replaceProgress}%` }}
-                />
               </div>
             </div>
-          ) : (
-            <>
-              <button
-                onClick={() => replaceInputRef.current?.click()}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
-              >
-                Choose new file
-              </button>
-              <input
-                ref={replaceInputRef}
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (f) handleReplaceFile(f)
-                  e.target.value = ''
-                }}
-              />
-              {replaceFile && (
-                <p className="mt-1 text-xs text-gray-500">
-                  Selected: {replaceFile.name}
-                </p>
+          ) : videoLevelTags.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5 px-4 lg:px-0">
+              {videoLevelTags.map((tag) => (
+                <button
+                  key={tag.id}
+                  onClick={() => navigate(`/?tag=${tag.id}`)}
+                  className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
+                >
+                  {tag.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Timestamp tags */}
+          {(displayTimestamps.length > 0 || isEditMode) && (
+            <section className="mt-6 px-4 lg:px-0">
+              <div className="mb-3 border-t border-gray-200" />
+              <h2 className="mb-2 text-sm font-semibold text-gray-700">Timestamps</h2>
+              <div className="flex flex-col gap-0.5">
+                {displayTimestamps.map((ts) => (
+                  <div
+                    key={ts.id}
+                    className={`flex items-center gap-2 rounded px-2 py-2 text-sm transition-colors ${
+                      activeTimestampId === ts.id
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    <button
+                      onClick={() => seekTo(ts.start_time)}
+                      className="flex flex-1 items-center gap-3 text-left"
+                    >
+                      <span className="shrink-0 text-xs text-gray-400">▶</span>
+                      <span className="shrink-0 font-mono text-xs text-gray-500">
+                        {formatTime(ts.start_time)}
+                        {ts.end_time !== null && ` - ${formatTime(ts.end_time)}`}
+                      </span>
+                      <span>{ts.tag_name}</span>
+                    </button>
+                    {isEditMode && (
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          onClick={() => openEditTimestamp(ts)}
+                          className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50"
+                        >
+                          edit
+                        </button>
+                        <button
+                          onClick={() => removeTimestamp(ts.id)}
+                          className="rounded px-2 py-1 text-xs text-red-500 hover:bg-red-50"
+                        >
+                          del
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {isEditMode && tsCreationStep === 'idle' && (
+                <button
+                  onClick={startAddTimestamp}
+                  className="mt-2 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:border-gray-400 w-full text-left"
+                >
+                  + Add timestamp tag
+                </button>
               )}
-              <p className="mt-1 text-xs text-gray-400">
-                This will upload immediately and replace the current file.
-              </p>
-            </>
+            </section>
           )}
-        </section>
-      )}
 
-      {/* Danger Zone (edit mode only) */}
-      {isEditMode && canDelete && (
-        <section className="mt-6 px-4">
-          <div className="mb-3 border-t border-red-200" />
-          <h2 className="mb-2 text-sm font-semibold text-red-600">Danger Zone</h2>
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-100"
-          >
-            Delete this video
-          </button>
-        </section>
-      )}
+          {/* Replace Video File (edit mode only) */}
+          {isEditMode && (
+            <section className="mt-6 px-4 lg:px-0">
+              <div className="mb-3 border-t border-gray-200" />
+              <h2 className="mb-2 text-sm font-semibold text-gray-700">Replace Video File</h2>
 
-      {/* Error banner (if media loaded but video URL failed) */}
-      {error && media && !isEditMode && (
-        <p className="mt-4 px-4 text-center text-sm text-red-500">{error}</p>
-      )}
+              {replacing ? (
+                <div>
+                  <div className="mb-1 flex justify-between text-xs text-gray-500">
+                    <span>Uploading replacement…</span>
+                    <span>{replaceProgress}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                      style={{ width: `${replaceProgress}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => replaceInputRef.current?.click()}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Choose new file
+                  </button>
+                  <input
+                    ref={replaceInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      if (f) handleReplaceFile(f)
+                      e.target.value = ''
+                    }}
+                  />
+                  {replaceFile && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Selected: {replaceFile.name}
+                    </p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-400">
+                    This will upload immediately and replace the current file.
+                  </p>
+                </>
+              )}
+            </section>
+          )}
+
+          {/* Danger Zone (edit mode only) */}
+          {isEditMode && canDelete && (
+            <section className="mt-6 px-4 lg:px-0">
+              <div className="mb-3 border-t border-red-200" />
+              <h2 className="mb-2 text-sm font-semibold text-red-600">Danger Zone</h2>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-100"
+              >
+                Delete this video
+              </button>
+            </section>
+          )}
+
+          {/* Error banner (if media loaded but video URL failed) */}
+          {error && media && !isEditMode && (
+            <p className="mt-4 px-4 text-center text-sm text-red-500 lg:px-0">{error}</p>
+          )}
+        </div>
+      </div>
 
       {/* Tag Picker bottom sheet (video-level tags) */}
       {showTagPicker && (
@@ -1058,9 +1080,9 @@ export default function VideoDetailPage() {
             className="fixed inset-0 z-40 bg-black/40"
             onClick={() => setEditingTimestamp(null)}
           />
-          <div className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-white shadow-xl">
+          <div className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-white shadow-xl lg:inset-0 lg:m-auto lg:h-fit lg:max-w-md lg:rounded-2xl">
             <div className="flex justify-center py-2">
-              <div className="h-1 w-10 rounded-full bg-gray-300" />
+              <div className="h-1 w-10 rounded-full bg-gray-300 lg:hidden" />
             </div>
             <div className="px-4 pb-2">
               <h3 className="text-lg font-semibold text-gray-900">Edit Timestamp</h3>

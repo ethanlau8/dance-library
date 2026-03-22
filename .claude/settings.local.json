@@ -7,7 +7,9 @@
       "Bash(ls -d \"C:/Users/minds/Videos/DANCE/\"*/)",
       "Bash(python -c \":*)",
       "Bash(git add WEBSITE/src/hooks/useMedia.ts WEBSITE/src/components/FilterPanel.tsx WEBSITE/src/components/ActiveFilterChips.tsx WEBSITE/src/pages/HomePage.tsx WEBSITE/src/pages/FolderPage.tsx)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm run build)",
+      "Bash(git add WEBSITE/src/components/ContinueWatchingRow.tsx WEBSITE/src/components/FilterPanel.tsx WEBSITE/src/components/Layout.tsx WEBSITE/src/components/MediaGrid.tsx WEBSITE/src/components/TagPicker.tsx WEBSITE/src/components/VideoPlayer.tsx WEBSITE/src/pages/VideoDetailPage.tsx)"
     ]
   }
 }

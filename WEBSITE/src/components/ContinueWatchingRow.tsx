@@ -30,8 +30,7 @@ export default function ContinueWatchingRow({ items }: ContinueWatchingRowProps)
             <button
               key={item.id}
               onClick={() => navigate(`/video/${item.id}`)}
-              className="relative flex-shrink-0 cursor-pointer"
-              style={{ width: '140px' }}
+              className="relative w-[140px] flex-shrink-0 cursor-pointer sm:w-[180px] lg:w-[200px]"
             >
               <div className="relative aspect-video w-full overflow-hidden rounded bg-gray-200">
                 <img

@@ -183,15 +183,15 @@ export default function TagPicker({
       {/* Backdrop */}
       <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
 
-      {/* Bottom sheet */}
-      <div className="fixed inset-x-0 bottom-0 z-50 flex max-h-[80vh] flex-col rounded-t-2xl bg-white shadow-xl">
-        {/* Handle bar */}
-        <div className="flex justify-center py-2">
+      {/* Bottom sheet / centered dialog on desktop */}
+      <div className="fixed inset-x-0 bottom-0 z-50 flex max-h-[80vh] flex-col rounded-t-2xl bg-white shadow-xl lg:inset-0 lg:m-auto lg:h-fit lg:max-w-lg lg:rounded-2xl">
+        {/* Handle bar (mobile only) */}
+        <div className="flex justify-center py-2 lg:hidden">
           <div className="h-1 w-10 rounded-full bg-gray-300" />
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-4 pb-2">
+        <div className="flex items-center justify-between px-4 pb-2 lg:pt-4">
           <h2 className="text-lg font-semibold text-gray-900">{multiSelect ? 'Select Tags' : 'Select Tag'}</h2>
           <button
             onClick={onClose}
@@ -292,7 +292,7 @@ export default function TagPicker({
             className="fixed inset-0 z-50 bg-black/20"
             onClick={() => setShowCreate(false)}
           />
-          <div className="fixed inset-x-0 bottom-0 z-[60] flex flex-col rounded-t-2xl bg-white shadow-xl">
+          <div className="fixed inset-x-0 bottom-0 z-[60] flex flex-col rounded-t-2xl bg-white shadow-xl lg:inset-0 lg:m-auto lg:h-fit lg:max-w-md lg:rounded-2xl">
             <div className="flex justify-center py-2">
               <div className="h-1 w-10 rounded-full bg-gray-300" />
             </div>

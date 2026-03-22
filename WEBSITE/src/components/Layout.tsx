@@ -17,25 +17,27 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       {/* Header */}
-      <header className="fixed top-0 right-0 left-0 z-30 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-4">
-        <Link to="/" className="text-lg font-bold text-gray-900 no-underline">
-          Dance Library
-        </Link>
-        <div className="flex items-center gap-2">
-          {can('upload_media') && (
-            <Link
-              to="/upload"
+      <header className="fixed top-0 right-0 left-0 z-30 h-14 border-b border-gray-200 bg-white">
+        <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
+          <Link to="/" className="text-lg font-bold text-gray-900 no-underline">
+            Dance Library
+          </Link>
+          <div className="flex items-center gap-2">
+            {can('upload_media') && (
+              <Link
+                to="/upload"
+                className="flex h-8 w-8 items-center justify-center rounded text-xl text-gray-700 hover:bg-gray-100"
+              >
+                +
+              </Link>
+            )}
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
               className="flex h-8 w-8 items-center justify-center rounded text-xl text-gray-700 hover:bg-gray-100"
             >
-              +
-            </Link>
-          )}
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="flex h-8 w-8 items-center justify-center rounded text-xl text-gray-700 hover:bg-gray-100"
-          >
-            ≡
-          </button>
+              ≡
+            </button>
+          </div>
         </div>
       </header>
 
@@ -75,7 +77,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       )}
 
       {/* Content */}
-      <main className="mt-14 flex-1">
+      <main className="mx-auto mt-14 max-w-6xl flex-1">
         {children}
       </main>
     </div>

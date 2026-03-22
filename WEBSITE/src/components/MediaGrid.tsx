@@ -35,7 +35,7 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
   if (viewMode === 'grid') {
     return (
       <div>
-        <div className="grid grid-cols-3" style={{ gap: '1px' }}>
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" style={{ gap: '1px' }}>
           {media.map((item) => (
             <button
               key={item.id}
@@ -59,7 +59,7 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
   // Feed view
   return (
     <div>
-      <div className="flex flex-col gap-6 px-4">
+      <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4">
         {media.map((item) => {
           const tags = mediaTags?.[item.id] || []
           const displayDate = item.recorded_at || item.created_at

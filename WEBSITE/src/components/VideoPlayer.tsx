@@ -11,6 +11,7 @@ interface VideoPlayerProps {
   timestampMarkers: TimestampMarker[]
   onTimeUpdate?: (currentTime: number) => void
   onPause?: (currentTime: number) => void
+  disableSticky?: boolean
 }
 
 function formatTime(seconds: number): string {
@@ -22,7 +23,7 @@ function formatTime(seconds: number): string {
 }
 
 const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function VideoPlayer(
-  { src, poster, initialPosition, timestampMarkers, onTimeUpdate, onPause },
+  { src, poster, initialPosition, timestampMarkers, onTimeUpdate, onPause, disableSticky = false },
   ref
 ) {
   const internalRef = useRef<HTMLVideoElement>(null)
@@ -59,8 +60,12 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
     }
   })
 
-  // Sticky behavior via IntersectionObserver
+  // Sticky behavior via IntersectionObserver (disabled on desktop where CSS sticky is used)
   useEffect(() => {
+    if (disableSticky) {
+      setIsSticky(false)
+      return
+    }
     const sentinel = sentinelRef.current
     if (!sentinel) return
 
@@ -73,7 +78,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
 
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [])
+  }, [disableSticky])
 
   // Auto-hide controls after 3 seconds
   const resetHideTimer = useCallback(() => {
