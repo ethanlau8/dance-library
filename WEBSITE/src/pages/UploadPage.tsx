@@ -226,6 +226,23 @@ export default function UploadPage() {
     }
   }, [])
 
+  // iOS fix: reset stuck "preparing" mode when page regains visibility
+  // (e.g. after the iOS file picker closes without firing the change event)
+  useEffect(() => {
+    if (mode !== 'preparing') return
+
+    function handleVisibility() {
+      if (document.visibilityState !== 'visible') return
+      // Short delay: give the change event time to fire if files were selected
+      setTimeout(() => {
+        setMode(prev => prev === 'preparing' ? 'select' : prev)
+      }, 1500)
+    }
+
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [mode])
+
   // Fetch tag details for single-file flow
   useEffect(() => {
     if (selectedTagIds.length === 0) { setSelectedTags([]); return }
@@ -844,6 +861,18 @@ export default function UploadPage() {
         <p className="max-w-xs text-center text-sm text-gray-500">
           Your device is processing the selected videos. This may take a moment for large files.
         </p>
+        <button
+          onClick={() => {
+            if (preparingTimerRef.current) {
+              clearTimeout(preparingTimerRef.current)
+              preparingTimerRef.current = null
+            }
+            setMode('select')
+          }}
+          className="mt-6 text-sm text-gray-500 underline hover:text-gray-700"
+        >
+          Cancel
+        </button>
       </div>
     )
   }

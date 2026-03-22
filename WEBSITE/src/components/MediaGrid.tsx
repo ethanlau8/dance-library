@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
+import LazyImage from './LazyImage'
 import type { Media, Tag } from '../types'
 
 interface MediaGridProps {
@@ -42,11 +43,10 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
               onClick={() => navigate(`/video/${item.id}`)}
               className="relative aspect-square cursor-pointer overflow-hidden bg-gray-200"
             >
-              <img
+              <LazyImage
                 src={thumbnailUrl(item.thumbnail_path)}
                 alt={item.title}
-                loading="lazy"
-                className="h-full w-full object-cover"
+                className="h-full w-full"
               />
             </button>
           ))}
@@ -70,11 +70,10 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
               className="w-full cursor-pointer text-left"
             >
               <div className="relative aspect-video w-full overflow-hidden rounded bg-gray-200">
-                <img
+                <LazyImage
                   src={thumbnailUrl(item.thumbnail_path)}
                   alt={item.title}
-                  loading="lazy"
-                  className="h-full w-full object-cover"
+                  className="h-full w-full"
                 />
               </div>
               <h3 className="mt-2 font-medium text-gray-900">{item.title}</h3>
