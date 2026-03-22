@@ -27,6 +27,7 @@ export default function FolderPage() {
     from: null,
     to: null,
   })
+  const [activeMediaType, setActiveMediaType] = useState<string | null>(null)
 
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isFilterOpen, setIsFilterOpen] = useState(false)
@@ -37,6 +38,7 @@ export default function FolderPage() {
     fromDate: activeDateRange.from,
     toDate: activeDateRange.to,
     folderTagId: tagId ?? null,
+    mediaType: activeMediaType,
   })
 
   useEffect(() => {
@@ -79,9 +81,10 @@ export default function FolderPage() {
     })
   }
 
-  function handleApplyFilters(tags: Tag[], dateRange: { from: string | null; to: string | null }) {
+  function handleApplyFilters(tags: Tag[], dateRange: { from: string | null; to: string | null }, mediaType: string | null) {
     setActiveTagFilters(tags)
     setActiveDateRange(dateRange)
+    setActiveMediaType(mediaType)
   }
 
   if (folderLoading) {
@@ -148,7 +151,7 @@ export default function FolderPage() {
           <button
             onClick={() => setIsFilterOpen(true)}
             className={`rounded border px-2 py-1 text-xs ${
-              activeTagFilters.length > 0 || activeDateRange.from || activeDateRange.to
+              activeTagFilters.length > 0 || activeDateRange.from || activeDateRange.to || activeMediaType
                 ? 'border-blue-300 bg-blue-50 text-blue-700'
                 : 'border-gray-300 text-gray-700'
             }`}
@@ -164,9 +167,11 @@ export default function FolderPage() {
           tags: activeTagFilters,
           fromDate: activeDateRange.from,
           toDate: activeDateRange.to,
+          mediaType: activeMediaType,
         }}
         onRemoveTag={handleRemoveTag}
         onClearDates={handleClearDates}
+        onClearMediaType={() => setActiveMediaType(null)}
       />
 
       {/* Media grid */}
@@ -201,6 +206,7 @@ export default function FolderPage() {
         onClose={() => setIsFilterOpen(false)}
         activeTags={activeTagFilters}
         activeDateRange={activeDateRange}
+        activeMediaType={activeMediaType}
         onApply={handleApplyFilters}
       />
     </div>

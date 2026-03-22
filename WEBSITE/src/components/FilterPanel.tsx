@@ -7,7 +7,8 @@ interface FilterPanelProps {
   onClose: () => void
   activeTags: Tag[]
   activeDateRange: { from: string | null; to: string | null }
-  onApply: (tags: Tag[], dateRange: { from: string | null; to: string | null }) => void
+  activeMediaType: string | null
+  onApply: (tags: Tag[], dateRange: { from: string | null; to: string | null }, mediaType: string | null) => void
 }
 
 interface TagWithCategory extends Tag {
@@ -21,6 +22,7 @@ export default function FilterPanel({
   onClose,
   activeTags,
   activeDateRange,
+  activeMediaType,
   onApply,
 }: FilterPanelProps) {
   const [allTags, setAllTags] = useState<TagWithCategory[]>([])
@@ -29,6 +31,7 @@ export default function FilterPanel({
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [dateFrom, setDateFrom] = useState<string>('')
   const [dateTo, setDateTo] = useState<string>('')
+  const [selectedMediaType, setSelectedMediaType] = useState<string | null>(null)
 
   // Fetch tags on first open
   useEffect(() => {
@@ -42,8 +45,9 @@ export default function FilterPanel({
     setSelectedTagIds(new Set(activeTags.map((t) => t.id)))
     setDateFrom(activeDateRange.from ?? '')
     setDateTo(activeDateRange.to ?? '')
+    setSelectedMediaType(activeMediaType)
     setExpandedCategories(new Set())
-  }, [isOpen, activeTags, activeDateRange])
+  }, [isOpen, activeTags, activeDateRange, activeMediaType])
 
   async function fetchTags() {
     setLoading(true)
@@ -106,6 +110,7 @@ export default function FilterPanel({
     setSelectedTagIds(new Set())
     setDateFrom('')
     setDateTo('')
+    setSelectedMediaType(null)
   }
 
   function handleApply() {
@@ -115,7 +120,8 @@ export default function FilterPanel({
       {
         from: dateFrom || null,
         to: dateTo || null,
-      }
+      },
+      selectedMediaType
     )
     onClose()
   }
@@ -198,6 +204,28 @@ export default function FilterPanel({
                   </div>
                 )
               })}
+
+              {/* Media type */}
+              <div className="mb-4 border-t border-gray-100 pt-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Media Type
+                </p>
+                <div className="flex gap-2">
+                  {([['video', 'Videos'], ['image', 'Images']] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setSelectedMediaType(prev => prev === value ? null : value)}
+                      className={`rounded-full px-3 py-1.5 text-xs transition-colors ${
+                        selectedMediaType === value
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Date range */}
               <div className="mb-4 border-t border-gray-100 pt-4">

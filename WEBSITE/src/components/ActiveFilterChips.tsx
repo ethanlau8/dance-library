@@ -5,15 +5,22 @@ interface ActiveFilterChipsProps {
     tags: Tag[]
     fromDate: string | null
     toDate: string | null
+    mediaType?: string | null
   }
   onRemoveTag: (tagId: string) => void
   onClearDates: () => void
+  onClearMediaType?: () => void
 }
 
-export default function ActiveFilterChips({ activeFilters, onRemoveTag, onClearDates }: ActiveFilterChipsProps) {
-  const { tags, fromDate, toDate } = activeFilters
+const MEDIA_TYPE_LABELS: Record<string, string> = {
+  video: 'Videos',
+  image: 'Images',
+}
+
+export default function ActiveFilterChips({ activeFilters, onRemoveTag, onClearDates, onClearMediaType }: ActiveFilterChipsProps) {
+  const { tags, fromDate, toDate, mediaType } = activeFilters
   const hasDateFilter = fromDate || toDate
-  if (tags.length === 0 && !hasDateFilter) return null
+  if (tags.length === 0 && !hasDateFilter && !mediaType) return null
 
   const dateLabel = fromDate && toDate
     ? `${formatDate(fromDate)} – ${formatDate(toDate)}`
@@ -39,6 +46,15 @@ export default function ActiveFilterChips({ activeFilters, onRemoveTag, onClearD
           className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
         >
           {dateLabel}
+          <span className="text-blue-400">×</span>
+        </button>
+      )}
+      {mediaType && onClearMediaType && (
+        <button
+          onClick={onClearMediaType}
+          className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700"
+        >
+          {MEDIA_TYPE_LABELS[mediaType] ?? mediaType}
           <span className="text-blue-400">×</span>
         </button>
       )}

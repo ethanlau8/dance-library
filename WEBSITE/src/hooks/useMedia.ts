@@ -10,6 +10,7 @@ interface UseMediaOptions {
   fromDate: string | null
   toDate: string | null
   folderTagId: string | null
+  mediaType?: string | null
 }
 
 interface UseMediaResult {
@@ -25,7 +26,7 @@ interface UseMediaResult {
 const PAGE_SIZE = 24
 
 export function useMedia(options: UseMediaOptions): UseMediaResult {
-  const { sortBy, tagFilters, fromDate, toDate, folderTagId } = options
+  const { sortBy, tagFilters, fromDate, toDate, folderTagId, mediaType } = options
   const [media, setMedia] = useState<Media[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -91,6 +92,7 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
           .select('*', { count: 'exact' })
           .in('id', matchingIds)
 
+        if (mediaType) query = query.eq('media_type', mediaType)
         query = applyDateFilter(query, fromDate, toDate)
         query = applySorting(query, sortBy)
         query = query.range(from, to)
@@ -110,6 +112,7 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
           .from('media')
           .select('*', { count: 'exact' })
 
+        if (mediaType) query = query.eq('media_type', mediaType)
         query = applyDateFilter(query, fromDate, toDate)
         query = applySorting(query, sortBy)
         query = query.range(from, to)
@@ -131,7 +134,7 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
       setLoadingMore(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy, JSON.stringify(allTagIds), fromDate, toDate])
+  }, [sortBy, JSON.stringify(allTagIds), fromDate, toDate, mediaType])
 
   const fetchTagsForMedia = async (items: Media[], append: boolean) => {
     if (items.length === 0) return
