@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useWatchProgress } from '../hooks/useWatchProgress'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
-import { generateThumbnail, extractRecordedDate } from '../lib/ffmpeg'
+import { generateThumbnail } from '../lib/ffmpeg'
 import VideoPlayer from '../components/VideoPlayer'
 import TagPicker from '../components/TagPicker'
 import type { Media, Tag, TimestampTag } from '../types'
@@ -501,28 +501,6 @@ export default function VideoDetailPage() {
   }
 
   // --- Replace video ---
-  const getVideoDuration = useCallback((file: File): Promise<number | null> => {
-    return new Promise((resolve) => {
-      if (!file.type.startsWith('video/')) {
-        resolve(null)
-        return
-      }
-      const video = document.createElement('video')
-      video.preload = 'metadata'
-      const url = URL.createObjectURL(file)
-      video.src = url
-      video.onloadedmetadata = () => {
-        const dur = isFinite(video.duration) ? video.duration : null
-        URL.revokeObjectURL(url)
-        resolve(dur)
-      }
-      video.onerror = () => {
-        URL.revokeObjectURL(url)
-        resolve(null)
-      }
-    })
-  }, [])
-
   async function handleReplaceFile(selectedFile: File) {
     if (!id || !user || !media) return
     setReplaceFile(selectedFile)
@@ -535,27 +513,10 @@ export default function VideoDetailPage() {
       const token = session.data.session?.access_token
       if (!token) throw new Error('Not authenticated')
 
-      // Generate thumbnail, extract date, get duration in parallel
-      const [thumbResult, dateResult, dur] = await Promise.allSettled([
-        generateThumbnail(selectedFile),
-        extractRecordedDate(selectedFile),
-        getVideoDuration(selectedFile),
-      ])
-
-      const thumbBlob =
-        thumbResult.status === 'fulfilled' ? thumbResult.value.blob : null
-      const extractedDate =
-        dateResult.status === 'fulfilled' ? dateResult.value : null
-      const newDuration =
-        dur.status === 'fulfilled' ? dur.value : null
-
-      // Offer to update recorded date if different
-      if (extractedDate) {
-        const extractedDay = extractedDate.split('T')[0]
-        if (extractedDay !== editRecordedDate) {
-          setEditRecordedDate(extractedDay)
-        }
-      }
+      // Generate thumbnail and get duration via canvas
+      const thumbResult = await generateThumbnail(selectedFile).catch(() => null)
+      const thumbBlob = thumbResult?.blob ?? null
+      const newDuration = thumbResult?.duration ?? null
 
       // Get presigned upload URLs
       const mediaType = selectedFile.type.startsWith('video/')
@@ -638,7 +599,6 @@ export default function VideoDetailPage() {
             new_storage_path: media_storage_path,
             new_thumbnail_path: finalThumbPath,
             duration: newDuration ? Math.round(newDuration) : undefined,
-            recorded_at: extractedDate ?? undefined,
           }),
         }
       )
