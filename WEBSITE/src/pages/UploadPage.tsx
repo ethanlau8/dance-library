@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { generateThumbnail } from '../lib/ffmpeg'
+import { generateThumbnail, extractVideoMetadata } from '../lib/ffmpeg'
+import { runWithConcurrency } from '../lib/concurrency'
 import { formatFileSize, formatDuration } from '../lib/format'
 import TagPicker from '../components/TagPicker'
 import type { Tag } from '../types'
@@ -56,7 +57,7 @@ function determineMediaType(file: File): string {
 
 // ─── Bulk queue item ────────────────────────────────────────────────────────
 
-type QueueItemStatus = 'pending' | 'generating' | 'ready' | 'duplicate' | 'uploading' | 'done' | 'error'
+type QueueItemStatus = 'pending' | 'ready' | 'duplicate' | 'uploading' | 'done' | 'error'
 
 interface QueueItem {
   id: string
@@ -169,17 +170,20 @@ export default function UploadPage() {
     if (guessedDate) setRecordedDate(guessedDate)
 
     if (isVideoFile(selectedFile)) {
+      // Fast metadata extraction (~instant, header-only)
+      const meta = await extractVideoMetadata(selectedFile)
+      if (meta.duration != null) setDuration(meta.duration)
+      if (meta.width && meta.height) setResolution(`${meta.width}x${meta.height}`)
+
+      // Background thumbnail generation (non-blocking)
       setGeneratingThumb(true)
-      try {
-        const result = await generateThumbnail(selectedFile)
-        setThumbnailBlob(result.blob)
-        setThumbnailPreview(result.dataUrl)
-        if (result.duration != null) setDuration(result.duration)
-        if (result.width && result.height) setResolution(`${result.width}x${result.height}`)
-      } catch {
-        // Thumbnail failed — proceed without it
-      }
-      setGeneratingThumb(false)
+      generateThumbnail(selectedFile)
+        .then(result => {
+          setThumbnailBlob(result.blob)
+          setThumbnailPreview(result.dataUrl)
+        })
+        .catch(() => { /* Thumbnail failed — proceed without it */ })
+        .finally(() => setGeneratingThumb(false))
     } else if (selectedFile.type.startsWith('image/')) {
       setThumbnailPreview(URL.createObjectURL(selectedFile))
     }
@@ -333,6 +337,7 @@ export default function UploadPage() {
 
     // Check for duplicates
     const filenames = items.map(i => i.file.name)
+    let dupeNames = new Set<string>()
     try {
       const { data: existing } = await supabase
         .from('media')
@@ -340,56 +345,33 @@ export default function UploadPage() {
         .in('original_filename', filenames)
 
       if (existing && existing.length > 0) {
-        const dupeNames = new Set(existing.map(e => e.original_filename))
-        setQueue(prev => prev.map(item =>
-          dupeNames.has(item.file.name)
-            ? { ...item, status: 'duplicate' as const }
-            : item
-        ))
+        dupeNames = new Set(existing.map(e => e.original_filename))
       }
     } catch {
       // Duplicate check failed — continue without flagging
     }
 
-    // Generate thumbnails sequentially
-    for (const item of items) {
-      // Re-read status in case it was set to duplicate
-      setQueue(prev => {
-        const current = prev.find(i => i.id === item.id)
-        if (!current || current.status === 'duplicate') return prev
-        return prev.map(i => i.id === item.id ? { ...i, status: 'generating' as const } : i)
-      })
+    // Fast metadata extraction for all files (header-only, no thumbnail generation)
+    const updatedItems = await Promise.all(items.map(async (item) => {
+      let duration: number | null = null
+      let resolution: string | null = null
 
       if (isVideoFile(item.file)) {
-        try {
-          const result = await generateThumbnail(item.file)
-          setQueue(prev => prev.map(i => i.id === item.id ? {
-            ...i,
-            thumbnailBlob: result.blob,
-            thumbnailPreview: result.dataUrl,
-            duration: result.duration,
-            resolution: result.width && result.height ? `${result.width}x${result.height}` : null,
-            status: i.status === 'duplicate' ? 'duplicate' as const : 'ready' as const,
-          } : i))
-        } catch {
-          setQueue(prev => prev.map(i => i.id === item.id ? {
-            ...i,
-            status: i.status === 'duplicate' ? 'duplicate' as const : 'ready' as const,
-          } : i))
-        }
-      } else if (item.file.type.startsWith('image/')) {
-        setQueue(prev => prev.map(i => i.id === item.id ? {
-          ...i,
-          thumbnailPreview: URL.createObjectURL(item.file),
-          status: i.status === 'duplicate' ? 'duplicate' as const : 'ready' as const,
-        } : i))
-      } else {
-        setQueue(prev => prev.map(i => i.id === item.id ? {
-          ...i,
-          status: i.status === 'duplicate' ? 'duplicate' as const : 'ready' as const,
-        } : i))
+        const meta = await extractVideoMetadata(item.file)
+        duration = meta.duration
+        resolution = meta.width && meta.height ? `${meta.width}x${meta.height}` : null
       }
-    }
+
+      return {
+        ...item,
+        duration,
+        resolution,
+        thumbnailPreview: item.file.type.startsWith('image/') ? URL.createObjectURL(item.file) : null,
+        status: dupeNames.has(item.file.name) ? 'duplicate' as const : 'ready' as const,
+      }
+    }))
+
+    setQueue(updatedItems)
   }
 
   function toggleDuplicate(id: string) {
@@ -450,18 +432,7 @@ export default function UploadPage() {
         xhr.send(item.file)
       })
 
-      // 3. Upload thumbnail
-      let finalThumbnailPath: string | null = null
-      if (item.thumbnailBlob && thumbnail_upload_url) {
-        const thumbRes = await fetch(thumbnail_upload_url, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'image/webp' },
-          body: item.thumbnailBlob,
-        })
-        if (thumbRes.ok) finalThumbnailPath = thumbnail_storage_path
-      }
-
-      // 4. Create media record
+      // 3. Create media record (without thumbnail — it will be added after)
       const createRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-media`,
         {
@@ -474,7 +445,7 @@ export default function UploadPage() {
             title: item.title,
             media_type: mediaType,
             storage_path: media_storage_path,
-            thumbnail_path: finalThumbnailPath,
+            thumbnail_path: null,
             duration: item.duration != null ? Math.round(item.duration) : null,
             recorded_at: item.recordedDate ? new Date(item.recordedDate).toISOString() : null,
             tag_ids: bulkTagIds,
@@ -490,6 +461,25 @@ export default function UploadPage() {
 
       const { media_id } = await createRes.json()
       updateQueueItem(item.id, { status: 'done', progress: 100, mediaId: media_id })
+
+      // Background: generate thumbnail, upload to R2, and patch media record
+      if (isVideoFile(item.file) && thumbnail_upload_url) {
+        generateThumbnail(item.file)
+          .then(async (thumbResult) => {
+            const thumbRes = await fetch(thumbnail_upload_url, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'image/webp' },
+              body: thumbResult.blob,
+            })
+            if (thumbRes.ok) {
+              await supabase
+                .from('media')
+                .update({ thumbnail_path: thumbnail_storage_path })
+                .eq('id', media_id)
+            }
+          })
+          .catch(() => { /* Thumbnail failed — not critical */ })
+      }
     } catch (err) {
       updateQueueItem(item.id, {
         status: 'error',
@@ -508,7 +498,7 @@ export default function UploadPage() {
     setMode('bulk-uploading')
 
     const toUpload = queue.filter(item => item.status === 'ready')
-    await Promise.all(toUpload.map(item => uploadSingleItem(item, token)))
+    await runWithConcurrency(toUpload.map(item => () => uploadSingleItem(item, token)), 2)
 
     setMode('bulk-done')
   }
@@ -523,7 +513,7 @@ export default function UploadPage() {
     setMode('bulk-uploading')
 
     const toRetry = queue.filter(item => item.status === 'error')
-    await Promise.all(toRetry.map(item => uploadSingleItem(item, token)))
+    await runWithConcurrency(toRetry.map(item => () => uploadSingleItem(item, token)), 2)
 
     setMode('bulk-done')
   }
@@ -534,7 +524,7 @@ export default function UploadPage() {
   const doneCount = queue.filter(i => i.status === 'done').length
   const errorCount = queue.filter(i => i.status === 'error').length
   const duplicateCount = queue.filter(i => i.status === 'duplicate').length
-  const isGenerating = queue.some(i => i.status === 'generating' || i.status === 'pending')
+  const isGenerating = queue.some(i => i.status === 'pending')
 
   // ─── Render: file selection ────────────────────────────────────────────
 
@@ -568,9 +558,34 @@ export default function UploadPage() {
     )
   }
 
-  // ─── Render: single-file form (existing flow) ─────────────────────────
+  // ─── Render: single-file uploading (dedicated progress screen) ──────
 
-  if (mode === 'single-form' || mode === 'single-uploading') {
+  if (mode === 'single-uploading') {
+    return (
+      <div className="flex flex-col items-center justify-center px-4 py-20">
+        <div className="mb-6 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
+        <p className="mb-2 text-sm font-medium text-gray-900">Uploading&hellip;</p>
+        <p className="mb-4 max-w-xs truncate text-xs text-gray-500">{file?.name}</p>
+        <div className="w-full max-w-xs">
+          <div className="mb-1 flex justify-between text-xs text-gray-500">
+            <span>{formatFileSize(file?.size ?? 0)}</span>
+            <span>{uploadProgress}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-gray-200">
+            <div
+              className="h-full rounded-full bg-blue-600 transition-all duration-300"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+        </div>
+        <p className="mt-6 text-xs text-gray-400">Do not close this page</p>
+      </div>
+    )
+  }
+
+  // ─── Render: single-file form ─────────────────────────────────────────
+
+  if (mode === 'single-form') {
     return (
       <div className="px-4 py-4">
         {/* File preview row */}
@@ -599,29 +614,12 @@ export default function UploadPage() {
                 <p className="text-xs text-blue-500">Generating thumbnail&hellip;</p>
               )}
             </div>
-            {mode === 'single-form' && (
-              <button onClick={resetAll} className="shrink-0 text-gray-400">&times;</button>
-            )}
+            <button onClick={resetAll} className="shrink-0 text-gray-400">&times;</button>
           </div>
         )}
 
         {error && (
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
-        )}
-
-        {mode === 'single-uploading' && (
-          <div className="mb-4">
-            <div className="mb-1 flex justify-between text-xs text-gray-500">
-              <span>Uploading&hellip;</span>
-              <span>{uploadProgress}%</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-gray-200">
-              <div
-                className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                style={{ width: `${uploadProgress}%` }}
-              />
-            </div>
-          </div>
         )}
 
         <div className="space-y-4">
@@ -633,9 +631,8 @@ export default function UploadPage() {
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              disabled={mode === 'single-uploading'}
               placeholder="Video title"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
 
@@ -644,10 +641,9 @@ export default function UploadPage() {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              disabled={mode === 'single-uploading'}
               placeholder="Optional description"
               rows={3}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
 
@@ -657,8 +653,7 @@ export default function UploadPage() {
               type="date"
               value={recordedDate}
               onChange={(e) => setRecordedDate(e.target.value)}
-              disabled={mode === 'single-uploading'}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-50"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
 
@@ -673,7 +668,6 @@ export default function UploadPage() {
                   {tag.name}
                   <button
                     onClick={() => setSelectedTagIds((prev) => prev.filter((id) => id !== tag.id))}
-                    disabled={mode === 'single-uploading'}
                     className="ml-0.5 text-gray-400 hover:text-gray-600"
                   >
                     &times;
@@ -682,8 +676,7 @@ export default function UploadPage() {
               ))}
               <button
                 onClick={() => setShowTagPicker(true)}
-                disabled={mode === 'single-uploading'}
-                className="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-xs text-gray-500 hover:border-gray-400 disabled:opacity-50"
+                className="rounded-full border border-dashed border-gray-300 px-2.5 py-1 text-xs text-gray-500 hover:border-gray-400"
               >
                 + Add Tag
               </button>
@@ -694,10 +687,10 @@ export default function UploadPage() {
         <div className="mt-6">
           <button
             onClick={handleSingleUpload}
-            disabled={mode === 'single-uploading' || !title.trim() || !file || generatingThumb}
+            disabled={!title.trim() || !file}
             className="w-full rounded-lg bg-blue-600 py-3 text-sm font-medium text-white disabled:opacity-50"
           >
-            {mode === 'single-uploading' ? 'Uploading\u2026' : 'Upload'}
+            Upload
           </button>
         </div>
 
@@ -743,11 +736,25 @@ export default function UploadPage() {
       )}
 
       {/* Progress summary during upload */}
-      {mode === 'bulk-uploading' && (
-        <div className="mb-4 rounded-lg bg-blue-50 px-3 py-2.5 text-sm text-blue-700">
-          Uploading&hellip; {doneCount} of {queue.filter(i => i.status === 'uploading' || i.status === 'done' || i.status === 'error').length} complete
-        </div>
-      )}
+      {mode === 'bulk-uploading' && (() => {
+        const activeCount = queue.filter(i => ['uploading', 'done', 'error'].includes(i.status)).length
+        const completedCount = doneCount + errorCount
+        const overallProgress = activeCount > 0 ? Math.round((completedCount / activeCount) * 100) : 0
+        return (
+          <div className="mb-4">
+            <div className="mb-2 rounded-lg bg-blue-50 px-3 py-2.5 text-sm text-blue-700">
+              Uploading&hellip; {completedCount} of {activeCount} complete
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-gray-200">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                style={{ width: `${overallProgress}%` }}
+              />
+            </div>
+            <p className="mt-2 text-center text-xs text-gray-400">Do not close this page</p>
+          </div>
+        )
+      })()}
 
       {/* Queue list */}
       <div className="space-y-2">
@@ -765,10 +772,6 @@ export default function UploadPage() {
             <div className="h-12 w-18 shrink-0 overflow-hidden rounded bg-gray-200">
               {item.thumbnailPreview ? (
                 <img src={item.thumbnailPreview} alt="" className="h-full w-full object-cover" />
-              ) : item.status === 'generating' || item.status === 'pending' ? (
-                <div className="flex h-full w-full items-center justify-center">
-                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
-                </div>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">
                   &mdash;

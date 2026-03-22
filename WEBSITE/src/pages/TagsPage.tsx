@@ -23,6 +23,16 @@ export default function TagsPage() {
   const [editError, setEditError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'tag'; item: TagWithCategory; mediaCount: number } | { type: 'category'; item: TagCategory; tagCount: number } | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // Category edit state
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
+  const [editCategoryName, setEditCategoryName] = useState('')
+  const [editCategoryError, setEditCategoryError] = useState<string | null>(null)
+  const [savingCategory, setSavingCategory] = useState(false)
+
   // Create state
   const [showCreate, setShowCreate] = useState(false)
   const [newTagName, setNewTagName] = useState('')
@@ -212,6 +222,137 @@ export default function TagsPage() {
     }
   }
 
+  // --- Delete tag ---
+  async function confirmDeleteTag(tag: TagWithCategory) {
+    // Count how many media items use this tag
+    const { count } = await supabase
+      .from('media_tags')
+      .select('*', { count: 'exact', head: true })
+      .eq('tag_id', tag.id)
+
+    setDeleteConfirm({ type: 'tag', item: tag, mediaCount: count ?? 0 })
+  }
+
+  async function executeDeleteTag() {
+    if (!deleteConfirm || deleteConfirm.type !== 'tag') return
+    setDeleting(true)
+
+    const tag = deleteConfirm.item
+    const categoryId = tag.category_id
+
+    const { error } = await supabase.from('tags').delete().eq('id', tag.id)
+
+    if (error) {
+      console.error('Failed to delete tag:', error)
+      setDeleting(false)
+      setDeleteConfirm(null)
+      return
+    }
+
+    // Remove from local state
+    const remainingTags = tags.filter((t) => t.id !== tag.id)
+    setTags(remainingTags)
+    setDeleteConfirm(null)
+    setDeleting(false)
+
+    // Auto-delete empty category
+    const categoryStillHasTags = remainingTags.some((t) => t.category_id === categoryId)
+    if (!categoryStillHasTags) {
+      await supabase.from('tag_categories').delete().eq('id', categoryId)
+      setCategories((prev) => prev.filter((c) => c.id !== categoryId))
+    }
+  }
+
+  // --- Delete category ---
+  async function confirmDeleteCategory(categoryName: string) {
+    const cat = categories.find((c) => c.name === categoryName)
+    if (!cat) return
+
+    const tagCount = tags.filter((t) => t.category_id === cat.id).length
+    setDeleteConfirm({ type: 'category', item: cat, tagCount })
+  }
+
+  async function executeDeleteCategory() {
+    if (!deleteConfirm || deleteConfirm.type !== 'category') return
+    setDeleting(true)
+
+    const cat = deleteConfirm.item
+    const catTagIds = tags.filter((t) => t.category_id === cat.id).map((t) => t.id)
+
+    // Delete all tags in the category first (cascade will handle media_tags)
+    if (catTagIds.length > 0) {
+      const { error: tagsError } = await supabase.from('tags').delete().in('id', catTagIds)
+      if (tagsError) {
+        console.error('Failed to delete tags:', tagsError)
+        setDeleting(false)
+        setDeleteConfirm(null)
+        return
+      }
+    }
+
+    // Delete the category
+    const { error } = await supabase.from('tag_categories').delete().eq('id', cat.id)
+    if (error) {
+      console.error('Failed to delete category:', error)
+    }
+
+    // Update local state
+    setTags((prev) => prev.filter((t) => t.category_id !== cat.id))
+    setCategories((prev) => prev.filter((c) => c.id !== cat.id))
+    setDeleteConfirm(null)
+    setDeleting(false)
+  }
+
+  // --- Edit category ---
+  function startEditCategory(categoryName: string) {
+    const cat = categories.find((c) => c.name === categoryName)
+    if (!cat) return
+    setEditingCategoryId(cat.id)
+    setEditCategoryName(cat.name)
+    setEditCategoryError(null)
+  }
+
+  function cancelEditCategory() {
+    setEditingCategoryId(null)
+    setEditCategoryError(null)
+  }
+
+  async function saveEditCategory() {
+    if (!editingCategoryId || !editCategoryName.trim()) return
+
+    const trimmed = editCategoryName.trim()
+    const duplicate = categories.find(
+      (c) => c.id !== editingCategoryId && c.name.toLowerCase() === trimmed.toLowerCase()
+    )
+    if (duplicate) {
+      setEditCategoryError('A category with this name already exists')
+      return
+    }
+
+    setSavingCategory(true)
+    setEditCategoryError(null)
+
+    const { error } = await supabase
+      .from('tag_categories')
+      .update({ name: trimmed })
+      .eq('id', editingCategoryId)
+
+    if (error) {
+      setEditCategoryError(error.message)
+    } else {
+      setCategories((prev) =>
+        prev.map((c) => (c.id === editingCategoryId ? { ...c, name: trimmed } : c))
+      )
+      setTags((prev) =>
+        prev.map((t) =>
+          t.category_id === editingCategoryId ? { ...t, category_name: trimmed } : t
+        )
+      )
+      setEditingCategoryId(null)
+    }
+    setSavingCategory(false)
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-16">
@@ -249,11 +390,68 @@ export default function TagsPage() {
         {groupedTags.length === 0 ? (
           <p className="py-12 text-center text-sm text-gray-400">No tags found</p>
         ) : (
-          groupedTags.map(([category, catTags]) => (
+          groupedTags.map(([category, catTags]) => {
+            const catObj = categories.find((c) => c.name === category)
+            const isEditingCategory = catObj && editingCategoryId === catObj.id
+
+            return (
             <section key={category} className="mb-5">
-              <h2 className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-400">
-                {category}
-              </h2>
+              {/* Category header */}
+              {isEditingCategory ? (
+                <div className="mb-2 rounded-lg border border-blue-200 bg-blue-50 p-2.5">
+                  <input
+                    type="text"
+                    value={editCategoryName}
+                    onChange={(e) => setEditCategoryName(e.target.value)}
+                    className="mb-2 w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+                    placeholder="Category name"
+                    autoFocus
+                  />
+                  {editCategoryError && (
+                    <p className="mb-2 text-xs text-red-600">{editCategoryError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveEditCategory}
+                      disabled={savingCategory || !editCategoryName.trim()}
+                      className="rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+                    >
+                      {savingCategory ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      onClick={cancelEditCategory}
+                      className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-600"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-xs font-medium uppercase tracking-wider text-gray-400">
+                    {category}
+                  </h2>
+                  {can('create_tags') && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => startEditCategory(category)}
+                        title="Rename category"
+                        className="flex h-6 w-6 items-center justify-center rounded text-xs text-gray-300 hover:bg-gray-100 hover:text-gray-500"
+                      >
+                        &#9998;
+                      </button>
+                      <button
+                        onClick={() => confirmDeleteCategory(category)}
+                        title="Delete category"
+                        className="flex h-6 w-6 items-center justify-center rounded text-xs text-gray-300 hover:bg-red-50 hover:text-red-500"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1">
                 {catTags.map((tag) => {
                   if (editingId === tag.id) {
@@ -283,7 +481,7 @@ export default function TagsPage() {
                             disabled={saving || !editName.trim()}
                             className="rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
                           >
-                            {saving ? 'Saving…' : 'Save'}
+                            {saving ? 'Saving...' : 'Save'}
                           </button>
                           <button
                             onClick={cancelEdit}
@@ -314,7 +512,7 @@ export default function TagsPage() {
                             title={tag.is_folder ? 'Remove from folders' : 'Make a folder'}
                             className={`flex h-8 w-8 items-center justify-center rounded text-sm transition-colors ${
                               tag.is_folder
-                                ? 'text-blue-600 hover:bg-blue-50'
+                                ? 'bg-blue-100 text-blue-600 hover:bg-blue-200'
                                 : 'text-gray-300 hover:bg-gray-100 hover:text-gray-500'
                             }`}
                           >
@@ -330,14 +528,24 @@ export default function TagsPage() {
                             &#9998;
                           </button>
                         )}
+                        {can('create_tags') && (
+                          <button
+                            onClick={() => confirmDeleteTag(tag)}
+                            title="Delete tag"
+                            className="flex h-8 w-8 items-center justify-center rounded text-sm text-gray-300 hover:bg-red-50 hover:text-red-500"
+                          >
+                            &times;
+                          </button>
+                        )}
                       </div>
                     </div>
                   )
                 })}
               </div>
             </section>
-          ))
-        )}
+            )
+          }))
+        }
       </div>
 
       {/* Create tag modal */}
@@ -417,7 +625,73 @@ export default function TagsPage() {
                   disabled={creating || !newTagName.trim() || !categoryInput.trim()}
                   className="flex-1 rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {creating ? 'Creating…' : 'Create Tag'}
+                  {creating ? 'Creating...' : 'Create Tag'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => !deleting && setDeleteConfirm(null)}
+          />
+          <div className="fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-2xl bg-white shadow-xl">
+            <div className="flex justify-center py-2">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+            </div>
+            <div className="px-4 pb-6">
+              {deleteConfirm.type === 'tag' ? (
+                <>
+                  <h3 className="mb-2 text-lg font-semibold text-gray-900">Delete Tag</h3>
+                  <p className="mb-1 text-sm text-gray-600">
+                    Delete <strong>{deleteConfirm.item.name}</strong>?
+                  </p>
+                  {deleteConfirm.mediaCount > 0 ? (
+                    <p className="mb-4 text-sm text-gray-500">
+                      This tag is used on {deleteConfirm.mediaCount} video{deleteConfirm.mediaCount !== 1 ? 's' : ''}. It will be removed from all of them.
+                    </p>
+                  ) : (
+                    <p className="mb-4 text-sm text-gray-500">
+                      This tag is not used on any videos.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <h3 className="mb-2 text-lg font-semibold text-gray-900">Delete Category</h3>
+                  <p className="mb-1 text-sm text-gray-600">
+                    Delete <strong>{deleteConfirm.item.name}</strong>?
+                  </p>
+                  {deleteConfirm.tagCount > 0 ? (
+                    <p className="mb-4 text-sm text-gray-500">
+                      This will also delete {deleteConfirm.tagCount} tag{deleteConfirm.tagCount !== 1 ? 's' : ''} in this category and remove them from all videos.
+                    </p>
+                  ) : (
+                    <p className="mb-4 text-sm text-gray-500">
+                      This category has no tags.
+                    </p>
+                  )}
+                </>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  disabled={deleting}
+                  className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm text-gray-600 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={deleteConfirm.type === 'tag' ? executeDeleteTag : executeDeleteCategory}
+                  disabled={deleting}
+                  className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {deleting ? 'Deleting...' : 'Delete'}
                 </button>
               </div>
             </div>

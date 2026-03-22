@@ -1,4 +1,44 @@
 /**
+ * Fast metadata-only extraction. Loads only the file header —
+ * no seeking, no canvas, no frame decoding.
+ * Typically resolves in <100ms even on mobile.
+ */
+export async function extractVideoMetadata(
+  file: File
+): Promise<{ duration: number | null; width: number | null; height: number | null }> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.muted = true
+    video.playsInline = true
+
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url)
+      resolve({ duration: null, width: null, height: null })
+    }, 5000)
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timeout)
+      URL.revokeObjectURL(url)
+      resolve({
+        duration: isFinite(video.duration) ? video.duration : null,
+        width: video.videoWidth || null,
+        height: video.videoHeight || null,
+      })
+    }
+
+    video.onerror = () => {
+      clearTimeout(timeout)
+      URL.revokeObjectURL(url)
+      resolve({ duration: null, width: null, height: null })
+    }
+
+    video.src = url
+  })
+}
+
+/**
  * Client-side video thumbnail generation using the browser's native canvas API.
  * No WASM, no dependencies, no network download required.
  */
