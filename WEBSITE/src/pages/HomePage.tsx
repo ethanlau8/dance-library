@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 import { useMedia, type SortBy } from '../hooks/useMedia'
 import { useContinueWatching } from '../hooks/useContinueWatching'
 import { useFolders } from '../hooks/useFolders'
@@ -6,11 +8,15 @@ import MediaGrid from '../components/MediaGrid'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import FoldersRow from '../components/FoldersRow'
 import ActiveFilterChips from '../components/ActiveFilterChips'
+import SearchOverlay from '../components/SearchOverlay'
+import FilterPanel from '../components/FilterPanel'
 import type { Tag } from '../types'
 
 const VIEW_MODE_KEY = 'dance-library:view-mode'
 
 export default function HomePage() {
+  const location = useLocation()
+
   const [viewMode, setViewMode] = useState<'grid' | 'feed'>(() => {
     const saved = localStorage.getItem(VIEW_MODE_KEY)
     return saved === 'feed' ? 'feed' : 'grid'
@@ -21,6 +27,9 @@ export default function HomePage() {
     from: null,
     to: null,
   })
+
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
 
   const { media, totalCount, loading, hasMore, loadMore, mediaTags } = useMedia({
     sortBy,
@@ -37,6 +46,28 @@ export default function HomePage() {
     localStorage.setItem(VIEW_MODE_KEY, viewMode)
   }, [viewMode])
 
+  // Handle ?tag=<tagId> from URL (e.g., from video detail page tag chip)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const tagId = params.get('tag')
+    if (!tagId) return
+
+    // Look up the tag and add it to filters
+    supabase
+      .from('tags')
+      .select('*')
+      .eq('id', tagId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setActiveTagFilters((prev) => {
+            if (prev.some((t) => t.id === data.id)) return prev
+            return [...prev, data]
+          })
+        }
+      })
+  }, [location.search])
+
   function handleRemoveTag(tagId: string) {
     setActiveTagFilters((prev) => prev.filter((t) => t.id !== tagId))
   }
@@ -45,12 +76,24 @@ export default function HomePage() {
     setActiveDateRange({ from: null, to: null })
   }
 
+  function handleApplyTagFilter(tag: Tag) {
+    setActiveTagFilters((prev) => {
+      if (prev.some((t) => t.id === tag.id)) return prev
+      return [...prev, tag]
+    })
+  }
+
+  function handleApplyFilters(tags: Tag[], dateRange: { from: string | null; to: string | null }) {
+    setActiveTagFilters(tags)
+    setActiveDateRange(dateRange)
+  }
+
   return (
     <div className="pb-8">
-      {/* Search bar stub */}
+      {/* Search bar */}
       <div className="sticky top-14 z-20 bg-white px-4 py-2">
         <button
-          onClick={() => console.log('open search')}
+          onClick={() => setIsSearchOpen(true)}
           className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-left text-sm text-gray-400"
         >
           Search moves...
@@ -98,12 +141,16 @@ export default function HomePage() {
               <option value="alphabetical">A-Z</option>
             </select>
 
-            {/* Filters button stub */}
+            {/* Filters button */}
             <button
-              onClick={() => console.log('open filters')}
-              className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
+              onClick={() => setIsFilterOpen(true)}
+              className={`rounded border px-2 py-1 text-xs ${
+                activeTagFilters.length > 0 || activeDateRange.from || activeDateRange.to
+                  ? 'border-blue-300 bg-blue-50 text-blue-700'
+                  : 'border-gray-300 text-gray-700'
+              }`}
             >
-              Filters
+              Filters{activeTagFilters.length > 0 ? ` (${activeTagFilters.length})` : ''}
             </button>
           </div>
         </div>
@@ -136,6 +183,22 @@ export default function HomePage() {
           />
         )}
       </section>
+
+      {/* Search Overlay */}
+      <SearchOverlay
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onApplyTagFilter={handleApplyTagFilter}
+      />
+
+      {/* Filter Panel */}
+      <FilterPanel
+        isOpen={isFilterOpen}
+        onClose={() => setIsFilterOpen(false)}
+        activeTags={activeTagFilters}
+        activeDateRange={activeDateRange}
+        onApply={handleApplyFilters}
+      />
     </div>
   )
 }

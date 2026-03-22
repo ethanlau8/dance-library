@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase'
 import { useMedia, type SortBy } from '../hooks/useMedia'
 import MediaGrid from '../components/MediaGrid'
 import ActiveFilterChips from '../components/ActiveFilterChips'
+import SearchOverlay from '../components/SearchOverlay'
+import FilterPanel from '../components/FilterPanel'
 import type { Tag } from '../types'
 
 const VIEW_MODE_KEY = 'dance-library:view-mode'
@@ -25,6 +27,9 @@ export default function FolderPage() {
     from: null,
     to: null,
   })
+
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
 
   const { media, totalCount, loading, hasMore, loadMore, mediaTags } = useMedia({
     sortBy,
@@ -67,6 +72,18 @@ export default function FolderPage() {
     setActiveDateRange({ from: null, to: null })
   }
 
+  function handleApplyTagFilter(tag: Tag) {
+    setActiveTagFilters((prev) => {
+      if (prev.some((t) => t.id === tag.id)) return prev
+      return [...prev, tag]
+    })
+  }
+
+  function handleApplyFilters(tags: Tag[], dateRange: { from: string | null; to: string | null }) {
+    setActiveTagFilters(tags)
+    setActiveDateRange(dateRange)
+  }
+
   if (folderLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -87,10 +104,10 @@ export default function FolderPage() {
         </h1>
       </div>
 
-      {/* Search bar stub (scoped) */}
+      {/* Search bar (scoped to folder) */}
       <div className="px-4 pb-2">
         <button
-          onClick={() => console.log('open search in folder:', folderName)}
+          onClick={() => setIsSearchOpen(true)}
           className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-left text-sm text-gray-400"
         >
           Search in {folderName}...
@@ -127,12 +144,16 @@ export default function FolderPage() {
             <option value="alphabetical">A-Z</option>
           </select>
 
-          {/* Filters button stub */}
+          {/* Filters button */}
           <button
-            onClick={() => console.log('open filters')}
-            className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700"
+            onClick={() => setIsFilterOpen(true)}
+            className={`rounded border px-2 py-1 text-xs ${
+              activeTagFilters.length > 0 || activeDateRange.from || activeDateRange.to
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-gray-300 text-gray-700'
+            }`}
           >
-            Filters
+            Filters{activeTagFilters.length > 0 ? ` (${activeTagFilters.length})` : ''}
           </button>
         </div>
       </div>
@@ -164,6 +185,24 @@ export default function FolderPage() {
           mediaTags={mediaTags}
         />
       )}
+
+      {/* Search Overlay (scoped to folder) */}
+      <SearchOverlay
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onApplyTagFilter={handleApplyTagFilter}
+        folderTagId={tagId}
+        folderName={folderName}
+      />
+
+      {/* Filter Panel */}
+      <FilterPanel
+        isOpen={isFilterOpen}
+        onClose={() => setIsFilterOpen(false)}
+        activeTags={activeTagFilters}
+        activeDateRange={activeDateRange}
+        onApply={handleApplyFilters}
+      />
     </div>
   )
 }

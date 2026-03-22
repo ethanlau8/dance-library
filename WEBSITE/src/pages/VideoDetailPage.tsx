@@ -1032,6 +1032,11 @@ export default function VideoDetailPage() {
                   e.target.value = ''
                 }}
               />
+              {replaceFile && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Selected: {replaceFile.name}
+                </p>
+              )}
               <p className="mt-1 text-xs text-gray-400">
                 This will upload immediately and replace the current file.
               </p>
