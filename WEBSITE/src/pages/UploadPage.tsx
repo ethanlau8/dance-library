@@ -200,6 +200,10 @@ export default function UploadPage() {
   const [singleSteps, setSingleSteps] = useState<UploadStep[]>([])
   const [completedMediaId, setCompletedMediaId] = useState<string | null>(null)
   const [thumbnailWarning, setThumbnailWarning] = useState<string | null>(null)
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
+
+  // ─── Upload options ─────────────────────────────────────────────────────
+  const [skipThumbnails, setSkipThumbnails] = useState(false)
 
   // ─── Bulk state ─────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<QueueItem[]>([])
@@ -291,7 +295,23 @@ export default function UploadPage() {
     setFile(selectedFile)
     setMode('single-form')
     setError(null)
+    setDuplicateWarning(null)
     setTitle(selectedFile.name.replace(/\.[^/.]+$/, ''))
+
+    // Check if file already exists in DB
+    try {
+      const { data: existing } = await supabase
+        .from('media')
+        .select('original_filename')
+        .eq('original_filename', selectedFile.name)
+        .limit(1)
+
+      if (existing && existing.length > 0) {
+        setDuplicateWarning(`A file named "${selectedFile.name}" already exists in the library. You can still upload if this is intentional.`)
+      }
+    } catch {
+      // Duplicate check failed — continue without flagging
+    }
 
     const guessedDate = extractRecordedDateFromFile(selectedFile)
     if (guessedDate) setRecordedDate(guessedDate)
@@ -381,7 +401,9 @@ export default function UploadPage() {
       // ── Step 3: Generate thumbnail (sequential, blocking) ──
       let finalThumbnailBlob: Blob | null = null
 
-      if (isVideoFile(file)) {
+      if (skipThumbnails) {
+        updateSingleStep('thumbnail-gen', { status: 'skipped', error: 'Skipped by user' })
+      } else if (isVideoFile(file)) {
         updateSingleStep('thumbnail-gen', { status: 'active' })
         try {
           const thumbResult = await generateThumbnail(file)
@@ -400,7 +422,9 @@ export default function UploadPage() {
       // ── Step 4: Upload thumbnail to R2 ──
       let finalThumbnailPath: string | null = null
 
-      if (finalThumbnailBlob && thumbnail_upload_url) {
+      if (skipThumbnails) {
+        updateSingleStep('thumbnail-up', { status: 'skipped', error: 'Skipped by user' })
+      } else if (finalThumbnailBlob && thumbnail_upload_url) {
         updateSingleStep('thumbnail-up', { status: 'active' })
         try {
           const thumbRes = await fetch(thumbnail_upload_url, {
@@ -483,6 +507,7 @@ export default function UploadPage() {
     setSingleSteps([])
     setCompletedMediaId(null)
     setThumbnailWarning(null)
+    setDuplicateWarning(null)
     setQueue([])
     setBulkTagIds([])
     setBulkTags([])
@@ -646,7 +671,9 @@ export default function UploadPage() {
       // ── Step 3: Generate thumbnail (sequential, blocking) ──
       let thumbBlob: Blob | null = null
 
-      if (isVideoFile(item.file)) {
+      if (skipThumbnails) {
+        updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'skipped', error: 'Skipped by user' })
+      } else if (isVideoFile(item.file)) {
         updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'active' })
         try {
           const thumbResult = await generateThumbnail(item.file)
@@ -663,7 +690,9 @@ export default function UploadPage() {
       // ── Step 4: Upload thumbnail to R2 ──
       let finalThumbnailPath: string | null = null
 
-      if (thumbBlob && thumbnail_upload_url) {
+      if (skipThumbnails) {
+        updateQueueItemStep(item.id, 'thumbnail-up', { status: 'skipped', error: 'Skipped by user' })
+      } else if (thumbBlob && thumbnail_upload_url) {
         updateQueueItemStep(item.id, 'thumbnail-up', { status: 'active' })
         try {
           const thumbRes = await fetch(thumbnail_upload_url, {
@@ -957,6 +986,10 @@ export default function UploadPage() {
           <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
         )}
 
+        {duplicateWarning && (
+          <div className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{duplicateWarning}</div>
+        )}
+
         <div className="space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -1019,7 +1052,20 @@ export default function UploadPage() {
           </div>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={skipThumbnails}
+              onChange={(e) => setSkipThumbnails(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Skip thumbnail generation
+          </label>
+          <p className="mt-1 text-xs text-gray-400">Faster uploads. Generate thumbnails later with the batch tool.</p>
+        </div>
+
+        <div className="mt-4">
           <button
             onClick={handleSingleUpload}
             disabled={!title.trim() || !file}
@@ -1213,8 +1259,24 @@ export default function UploadPage() {
         </div>
       )}
 
+      {/* Skip thumbnail toggle */}
+      {mode === 'bulk-queue' && (
+        <div className="mt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={skipThumbnails}
+              onChange={(e) => setSkipThumbnails(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            Skip thumbnail generation
+          </label>
+          <p className="mt-1 text-xs text-gray-400">Faster uploads. Generate thumbnails later with the batch tool.</p>
+        </div>
+      )}
+
       {/* Action buttons */}
-      <div className="mt-6 space-y-2">
+      <div className="mt-4 space-y-2">
         {mode === 'bulk-queue' && (
           <button
             onClick={handleBulkUpload}

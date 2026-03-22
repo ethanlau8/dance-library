@@ -52,12 +52,30 @@ export async function generateThumbnail(
     video.preload = 'metadata'
     video.muted = true
     video.playsInline = true
+    let settled = false
 
     function cleanup() {
       URL.revokeObjectURL(url)
+      video.removeAttribute('src')
+      video.load()
     }
 
+    function settle(fn: () => void) {
+      if (settled) return
+      settled = true
+      fn()
+    }
+
+    // Overall timeout — if nothing happens within 10s, bail out
+    const overallTimeout = setTimeout(() => {
+      settle(() => {
+        cleanup()
+        reject(new Error('Thumbnail generation timed out'))
+      })
+    }, 10000)
+
     function captureFrame() {
+      clearTimeout(overallTimeout)
       const dur = isFinite(video.duration) ? video.duration : null
       const w = video.videoWidth || null
       const h = video.videoHeight || null
@@ -70,8 +88,10 @@ export async function generateThumbnail(
 
       const ctx = canvas.getContext('2d')
       if (!ctx) {
-        cleanup()
-        reject(new Error('Canvas 2D context unavailable'))
+        settle(() => {
+          cleanup()
+          reject(new Error('Canvas 2D context unavailable'))
+        })
         return
       }
 
@@ -79,13 +99,15 @@ export async function generateThumbnail(
 
       canvas.toBlob(
         (blob) => {
-          cleanup()
-          if (!blob) {
-            reject(new Error('Failed to export thumbnail'))
-            return
-          }
-          const dataUrl = URL.createObjectURL(blob)
-          resolve({ blob, dataUrl, duration: dur, width: w, height: h })
+          settle(() => {
+            cleanup()
+            if (!blob) {
+              reject(new Error('Failed to export thumbnail'))
+              return
+            }
+            const dataUrl = URL.createObjectURL(blob)
+            resolve({ blob, dataUrl, duration: dur, width: w, height: h })
+          })
         },
         'image/webp',
         0.8
@@ -114,9 +136,12 @@ export async function generateThumbnail(
     }
 
     video.onerror = () => {
+      clearTimeout(overallTimeout)
       if (seekFallbackTimer) clearTimeout(seekFallbackTimer)
-      cleanup()
-      reject(new Error('Could not load video for thumbnail'))
+      settle(() => {
+        cleanup()
+        reject(new Error('Could not load video for thumbnail'))
+      })
     }
 
     video.src = url

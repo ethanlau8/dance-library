@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
   const uuid = crypto.randomUUID();
   const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
   const mediaStoragePath = `videos/${uuid}.${ext}`;
-  const thumbnailStoragePath = `thumbs/${uuid}.jpg`;
+  const thumbnailStoragePath = `thumbs/${uuid}.webp`;
 
   // Build R2 S3 client
   const r2 = new S3Client({
@@ -116,7 +116,7 @@ Deno.serve(async (req: Request) => {
     new PutObjectCommand({
       Bucket: bucketName,
       Key: thumbnailStoragePath,
-      ContentType: "image/jpeg",
+      ContentType: "image/webp",
     }),
     { expiresIn }
   );

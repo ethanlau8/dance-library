@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import json; nb=json.load\\(open\\(''TESTING/integrity_check.ipynb''\\)\\); [print\\(f''{i}: id={c.get\\(\"\"id\"\",\"\"?\"\"\\)} type={c[\"\"cell_type\"\"]} src={c[\"\"source\"\"][0][:80] if c[\"\"source\"\"] else \"\"\\(empty\\)\"\"}''\\) for i,c in enumerate\\(nb[''cells'']\\)]\")",
+      "Bash(python -c \"import json; nb=json.load\\(open\\(''TESTING/integrity_check.ipynb'', encoding=''utf-8''\\)\\); [print\\(f''{i}: id={c.get\\(\"\"id\"\",\"\"?\"\"\\)} type={c[\"\"cell_type\"\"]} src={\\(\"\"\"\".join\\(c[\"\"source\"\"]\\)\\)[:80]}''\\) for i,c in enumerate\\(nb[''cells'']\\)]\")",
+      "Bash(npx tsc --noEmit --pretty)",
+      "Bash(ls -d \"C:/Users/minds/Videos/DANCE/\"*/)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}
