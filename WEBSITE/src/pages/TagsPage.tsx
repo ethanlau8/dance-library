@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
@@ -26,11 +26,12 @@ export default function TagsPage() {
   // Create state
   const [showCreate, setShowCreate] = useState(false)
   const [newTagName, setNewTagName] = useState('')
-  const [newTagCategoryId, setNewTagCategoryId] = useState('')
-  const [newCategoryName, setNewCategoryName] = useState('')
+  const [categoryInput, setCategoryInput] = useState('')
+  const [showCategorySuggestions, setShowCategorySuggestions] = useState(false)
   const [newTagDescription, setNewTagDescription] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const categoryRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fetchData()
@@ -70,6 +71,17 @@ export default function TagsPage() {
     }
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
   }, [filteredTags])
+
+  const filteredCategories = useMemo(() => {
+    if (!categoryInput.trim()) return categories
+    const q = categoryInput.toLowerCase().trim()
+    return categories.filter((c) => c.name.toLowerCase().includes(q))
+  }, [categories, categoryInput])
+
+  const categoryExactMatch = useMemo(() => {
+    if (!categoryInput.trim()) return null
+    return categories.find((c) => c.name.toLowerCase() === categoryInput.toLowerCase().trim()) ?? null
+  }, [categories, categoryInput])
 
   // --- Folder toggle ---
   async function handleFolderToggle(tag: TagWithCategory) {
@@ -142,25 +154,28 @@ export default function TagsPage() {
   // --- Create tag ---
   function openCreate() {
     setNewTagName('')
-    setNewTagCategoryId(categories.length > 0 ? categories[0].id : '')
-    setNewCategoryName('')
+    setCategoryInput('')
+    setShowCategorySuggestions(false)
     setNewTagDescription('')
     setCreateError(null)
     setShowCreate(true)
   }
 
   async function handleCreate() {
-    if (!user || !newTagName.trim()) return
+    if (!user || !newTagName.trim() || !categoryInput.trim()) return
     setCreating(true)
     setCreateError(null)
 
     try {
-      let categoryId = newTagCategoryId
+      let categoryId: string
 
-      if (newTagCategoryId === '__new__' && newCategoryName.trim()) {
+      // Use existing category if exact match, otherwise create new
+      if (categoryExactMatch) {
+        categoryId = categoryExactMatch.id
+      } else {
         const { data: catData, error: catError } = await supabase
           .from('tag_categories')
-          .insert({ name: newCategoryName.trim(), created_by: user.id })
+          .insert({ name: categoryInput.trim(), created_by: user.id })
           .select()
           .single()
 
@@ -350,34 +365,34 @@ export default function TagsPage() {
                   autoFocus
                 />
               </div>
-              <div>
+              <div ref={categoryRef} className="relative">
                 <label className="mb-1 block text-xs font-medium text-gray-500">Category</label>
-                <select
-                  value={newTagCategoryId}
-                  onChange={(e) => setNewTagCategoryId(e.target.value)}
+                <input
+                  type="text"
+                  value={categoryInput}
+                  onChange={(e) => { setCategoryInput(e.target.value); setShowCategorySuggestions(true) }}
+                  onFocus={() => setShowCategorySuggestions(true)}
+                  placeholder="Type to search or create"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                  <option value="__new__">+ New Category</option>
-                </select>
+                />
+                {showCategorySuggestions && filteredCategories.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                    {filteredCategories.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => { setCategoryInput(c.name); setShowCategorySuggestions(false) }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {categoryInput.trim() && !categoryExactMatch && (
+                  <p className="mt-1 text-xs text-blue-500">New category "{categoryInput.trim()}" will be created</p>
+                )}
               </div>
-              {newTagCategoryId === '__new__' && (
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500">
-                    New Category Name
-                  </label>
-                  <input
-                    type="text"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              )}
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-500">
                   Description (optional)
@@ -399,11 +414,7 @@ export default function TagsPage() {
                 </button>
                 <button
                   onClick={handleCreate}
-                  disabled={
-                    creating ||
-                    !newTagName.trim() ||
-                    (newTagCategoryId === '__new__' && !newCategoryName.trim())
-                  }
+                  disabled={creating || !newTagName.trim() || !categoryInput.trim()}
                   className="flex-1 rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white disabled:opacity-50"
                 >
                   {creating ? 'Creating…' : 'Create Tag'}
