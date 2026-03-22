@@ -1,9 +1,5 @@
-export interface Env {
-  BUCKET: R2Bucket;
-}
-
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request, env) {
     if (request.method !== "GET") {
       return new Response("Method not allowed", { status: 405 });
     }
@@ -25,6 +21,8 @@ export default {
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set("Cache-Control", "public, max-age=31536000");
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set("Cross-Origin-Resource-Policy", "cross-origin");
 
     // Ensure Content-Type is set if not present in R2 metadata
     if (!headers.has("Content-Type")) {

@@ -48,7 +48,6 @@ export default function TagPicker({
       supabase
         .from('tags')
         .select('*, tag_categories(name)')
-        .eq('is_folder', false)
         .order('name'),
       supabase.from('tag_categories').select('*').order('name'),
     ])

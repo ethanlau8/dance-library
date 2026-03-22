@@ -261,113 +261,93 @@ export default function VideoDetailPage() {
     setEditError(null)
 
     try {
-      // 1. Update media fields if changed
-      const updates: Record<string, any> = {}
-      if (editTitle.trim() !== media.title) updates.title = editTitle.trim()
+      // 1. Compute metadata diff
+      const metadata: Record<string, unknown> = {}
+      if (editTitle.trim() !== media.title) metadata.title = editTitle.trim()
       if ((editDescription.trim() || null) !== media.description) {
-        updates.description = editDescription.trim() || null
+        metadata.description = editDescription.trim() || null
       }
       const newRecordedAt = editRecordedDate
         ? new Date(editRecordedDate).toISOString()
         : null
       if (newRecordedAt !== media.recorded_at) {
-        updates.recorded_at = newRecordedAt
+        metadata.recorded_at = newRecordedAt
       }
 
-      if (Object.keys(updates).length > 0) {
-        updates.updated_at = new Date().toISOString()
-        const { error: updateErr } = await supabase
-          .from('media')
-          .update(updates)
-          .eq('id', id)
-        if (updateErr) throw updateErr
-      }
-
-      // 2. Sync video-level tags
+      // 2. Compute video-level tag diff
       const originalTagIds = videoLevelTags.map((t) => t.id)
       const removedTagIds = originalTagIds.filter((tid) => !editTagIds.includes(tid))
       const addedTagIds = editTagIds.filter((tid) => !originalTagIds.includes(tid))
 
-      if (removedTagIds.length > 0) {
-        const { error: delErr } = await supabase
-          .from('media_tags')
-          .delete()
-          .eq('media_id', id)
-          .in('tag_id', removedTagIds)
-          .is('start_time', null)
-        if (delErr) throw delErr
-      }
-
-      if (addedTagIds.length > 0) {
-        const { error: insErr } = await supabase
-          .from('media_tags')
-          .insert(
-            addedTagIds.map((tag_id) => ({
-              media_id: id,
-              tag_id,
-              created_by: user.id,
-            }))
-          )
-        if (insErr) throw insErr
-      }
-
-      // 3. Sync timestamp tags
+      // 3. Compute timestamp diff
       const originalTsIds = timestampTags.map((t) => t.id)
       const currentTsIds = editTimestamps.map((t) => t.id)
+      const deletedTsIds = originalTsIds.filter((tsId) => !currentTsIds.includes(tsId))
 
-      // Delete removed timestamps
-      const deletedTsIds = originalTsIds.filter(
-        (tsId) => !currentTsIds.includes(tsId)
-      )
-      if (deletedTsIds.length > 0) {
-        const { error: delTsErr } = await supabase
-          .from('media_tags')
-          .delete()
-          .in('id', deletedTsIds)
-        if (delTsErr) throw delTsErr
-      }
+      const newTimestamps = editTimestamps
+        .filter((t) => t.id.startsWith(TEMP_ID_PREFIX))
+        .map((t) => ({
+          tag_id: t.tag_id,
+          start_time: t.start_time,
+          end_time: t.end_time,
+        }))
 
-      // Insert new timestamps (temp IDs)
-      const newTimestamps = editTimestamps.filter((t) =>
-        t.id.startsWith(TEMP_ID_PREFIX)
-      )
-      if (newTimestamps.length > 0) {
-        const { error: insTsErr } = await supabase
-          .from('media_tags')
-          .insert(
-            newTimestamps.map((t) => ({
-              media_id: id,
-              tag_id: t.tag_id,
-              start_time: t.start_time,
-              end_time: t.end_time,
-              created_by: user.id,
-            }))
+      const modifiedTimestamps = editTimestamps
+        .filter((t) => {
+          if (t.id.startsWith(TEMP_ID_PREFIX)) return false
+          if (!originalTsIds.includes(t.id)) return false
+          const original = timestampTags.find((o) => o.id === t.id)
+          return (
+            original &&
+            (original.start_time !== t.start_time ||
+              original.end_time !== t.end_time ||
+              original.tag_id !== t.tag_id)
           )
-        if (insTsErr) throw insTsErr
+        })
+        .map((t) => ({
+          id: t.id,
+          tag_id: t.tag_id,
+          start_time: t.start_time,
+          end_time: t.end_time,
+        }))
+
+      // 4. Build payload (only include sections with actual changes)
+      const payload: Record<string, unknown> = { media_id: id }
+
+      if (Object.keys(metadata).length > 0) {
+        payload.metadata = metadata
+      }
+      if (removedTagIds.length > 0 || addedTagIds.length > 0) {
+        payload.tags = { added: addedTagIds, removed: removedTagIds }
+      }
+      if (deletedTsIds.length > 0 || newTimestamps.length > 0 || modifiedTimestamps.length > 0) {
+        payload.timestamps = {
+          added: newTimestamps,
+          modified: modifiedTimestamps,
+          removed: deletedTsIds,
+        }
       }
 
-      // Update edited existing timestamps
-      const editedTimestamps = editTimestamps.filter(
-        (t) => !t.id.startsWith(TEMP_ID_PREFIX) && originalTsIds.includes(t.id)
-      )
-      for (const ts of editedTimestamps) {
-        const original = timestampTags.find((o) => o.id === ts.id)
-        if (
-          original &&
-          (original.start_time !== ts.start_time ||
-            original.end_time !== ts.end_time ||
-            original.tag_id !== ts.tag_id)
-        ) {
-          const { error: upTsErr } = await supabase
-            .from('media_tags')
-            .update({
-              tag_id: ts.tag_id,
-              start_time: ts.start_time,
-              end_time: ts.end_time,
-            })
-            .eq('id', ts.id)
-          if (upTsErr) throw upTsErr
+      // 5. Call edge function
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      if (!token) throw new Error('Not authenticated')
+
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-media`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
         }
+      )
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Save failed with status ${res.status}`)
       }
 
       // Re-fetch and exit edit mode

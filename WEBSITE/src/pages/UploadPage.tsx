@@ -55,6 +55,98 @@ function determineMediaType(file: File): string {
   return 'other'
 }
 
+function isMobileDevice(): boolean {
+  return window.innerWidth < 768 ||
+    ('ontouchstart' in window && window.innerWidth < 1024)
+}
+
+// ─── Upload pipeline step tracking ─────────────────────────────────────────
+
+type UploadStepName = 'presign' | 'upload' | 'thumbnail-gen' | 'thumbnail-up' | 'db-save'
+type StepStatus = 'pending' | 'active' | 'done' | 'error' | 'skipped'
+
+interface UploadStep {
+  name: UploadStepName
+  label: string
+  status: StepStatus
+  progress?: number
+  error?: string
+}
+
+const UPLOAD_STEP_DEFS: { name: UploadStepName; label: string }[] = [
+  { name: 'presign', label: 'Preparing upload' },
+  { name: 'upload', label: 'Uploading file' },
+  { name: 'thumbnail-gen', label: 'Generating thumbnail' },
+  { name: 'thumbnail-up', label: 'Uploading thumbnail' },
+  { name: 'db-save', label: 'Saving to library' },
+]
+
+function createInitialSteps(): UploadStep[] {
+  return UPLOAD_STEP_DEFS.map(s => ({ name: s.name, label: s.label, status: 'pending' as const }))
+}
+
+// ─── Step checklist UI ──────────────────────────────────────────────────────
+
+function StepChecklist({ steps }: { steps: UploadStep[] }) {
+  return (
+    <div className="space-y-2">
+      {steps.map((step) => (
+        <div key={step.name} className="flex items-center gap-3">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center">
+            {step.status === 'done' && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-xs text-green-600">
+                &#10003;
+              </span>
+            )}
+            {step.status === 'active' && (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+            )}
+            {step.status === 'pending' && (
+              <span className="h-2 w-2 rounded-full bg-gray-300" />
+            )}
+            {step.status === 'error' && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-xs text-red-600">
+                !
+              </span>
+            )}
+            {step.status === 'skipped' && (
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-yellow-100 text-xs text-yellow-600">
+                &ndash;
+              </span>
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className={`text-sm ${
+              step.status === 'active' ? 'font-medium text-gray-900' :
+              step.status === 'done' ? 'text-gray-500' :
+              step.status === 'error' ? 'text-red-600' :
+              step.status === 'skipped' ? 'text-yellow-600' :
+              'text-gray-400'
+            }`}>
+              {step.label}
+              {step.status === 'active' && step.name === 'upload' && step.progress != null && (
+                <span className="ml-2 text-blue-600">{step.progress}%</span>
+              )}
+            </p>
+            {step.status === 'error' && step.error && (
+              <p className="text-xs text-red-500">{step.error}</p>
+            )}
+            {step.status === 'active' && step.name === 'upload' && step.progress != null && (
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${step.progress}%` }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Bulk queue item ────────────────────────────────────────────────────────
 
 type QueueItemStatus = 'pending' | 'ready' | 'duplicate' | 'uploading' | 'done' | 'error'
@@ -72,11 +164,13 @@ interface QueueItem {
   progress: number
   error: string | null
   mediaId: string | null
+  steps: UploadStep[]
+  currentStep: UploadStepName | null
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-type UploadMode = 'select' | 'single-form' | 'single-uploading' | 'bulk-queue' | 'bulk-uploading' | 'bulk-done'
+type UploadMode = 'select' | 'preparing' | 'single-form' | 'single-uploading' | 'single-done' | 'bulk-queue' | 'bulk-uploading' | 'bulk-done'
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -84,15 +178,15 @@ export default function UploadPage() {
   const { can } = usePermissions()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const preparingTimerRef = useRef<number | null>(null)
 
   // ─── Shared state ───────────────────────────────────────────────────────
   const [mode, setMode] = useState<UploadMode>('select')
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // ─── Single-file state (existing flow) ──────────────────────────────────
+  // ─── Single-file state ──────────────────────────────────────────────────
   const [file, setFile] = useState<File | null>(null)
-  const [thumbnailBlob, setThumbnailBlob] = useState<Blob | null>(null)
   const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null)
   const [generatingThumb, setGeneratingThumb] = useState(false)
   const [duration, setDuration] = useState<number | null>(null)
@@ -103,7 +197,9 @@ export default function UploadPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [selectedTags, setSelectedTags] = useState<Tag[]>([])
   const [showTagPicker, setShowTagPicker] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
+  const [singleSteps, setSingleSteps] = useState<UploadStep[]>([])
+  const [completedMediaId, setCompletedMediaId] = useState<string | null>(null)
+  const [thumbnailWarning, setThumbnailWarning] = useState<string | null>(null)
 
   // ─── Bulk state ─────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<QueueItem[]>([])
@@ -119,6 +215,13 @@ export default function UploadPage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [mode])
 
+  // Clean up preparing timer on unmount
+  useEffect(() => {
+    return () => {
+      if (preparingTimerRef.current) clearTimeout(preparingTimerRef.current)
+    }
+  }, [])
+
   // Fetch tag details for single-file flow
   useEffect(() => {
     if (selectedTagIds.length === 0) { setSelectedTags([]); return }
@@ -133,7 +236,21 @@ export default function UploadPage() {
       .then(({ data }) => { if (data) setBulkTags(data) })
   }, [bulkTagIds])
 
+  // ─── Helpers ────────────────────────────────────────────────────────────
+
+  function updateSingleStep(stepName: UploadStepName, updates: Partial<UploadStep>) {
+    setSingleSteps(prev => prev.map(s => s.name === stepName ? { ...s, ...updates } : s))
+  }
+
   // ─── File selection handlers ────────────────────────────────────────────
+
+  function handleFileInputClick() {
+    // Show "preparing" state after a short delay — avoids flash on desktop
+    // where files arrive nearly instantly
+    preparingTimerRef.current = window.setTimeout(() => {
+      setMode('preparing')
+    }, 300)
+  }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -148,8 +265,18 @@ export default function UploadPage() {
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    // Cancel the preparing-mode timer if files arrived quickly
+    if (preparingTimerRef.current) {
+      clearTimeout(preparingTimerRef.current)
+      preparingTimerRef.current = null
+    }
+
     const files = Array.from(e.target.files ?? [])
-    if (files.length === 0) return
+    if (files.length === 0) {
+      // User cancelled the file picker
+      setMode('select')
+      return
+    }
     if (files.length === 1) {
       handleSingleFileSelected(files[0])
     } else {
@@ -175,14 +302,13 @@ export default function UploadPage() {
       if (meta.duration != null) setDuration(meta.duration)
       if (meta.width && meta.height) setResolution(`${meta.width}x${meta.height}`)
 
-      // Background thumbnail generation (non-blocking)
+      // Background thumbnail generation for PREVIEW ONLY (not relied upon for upload)
       setGeneratingThumb(true)
       generateThumbnail(selectedFile)
         .then(result => {
-          setThumbnailBlob(result.blob)
           setThumbnailPreview(result.dataUrl)
         })
-        .catch(() => { /* Thumbnail failed — proceed without it */ })
+        .catch(() => { /* Preview failed — no problem, upload pipeline handles it */ })
         .finally(() => setGeneratingThumb(false))
     } else if (selectedFile.type.startsWith('image/')) {
       setThumbnailPreview(URL.createObjectURL(selectedFile))
@@ -193,8 +319,9 @@ export default function UploadPage() {
     if (!file || !title.trim() || !user) return
 
     setMode('single-uploading')
-    setUploadProgress(0)
     setError(null)
+    setThumbnailWarning(null)
+    setSingleSteps(createInitialSteps())
 
     try {
       const session = await supabase.auth.getSession()
@@ -203,7 +330,9 @@ export default function UploadPage() {
 
       const mediaType = determineMediaType(file)
 
-      // 1. Get presigned upload URLs
+      // ── Step 1: Get presigned upload URLs ──
+      updateSingleStep('presign', { status: 'active' })
+
       const urlRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-upload-url`,
         {
@@ -224,13 +353,20 @@ export default function UploadPage() {
 
       const { media_upload_url, media_storage_path, thumbnail_upload_url, thumbnail_storage_path } = await urlRes.json()
 
-      // 2. Upload file to R2
+      updateSingleStep('presign', { status: 'done' })
+
+      // ── Step 2: Upload file to R2 ──
+      updateSingleStep('upload', { status: 'active', progress: 0 })
+
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
         xhr.open('PUT', media_upload_url)
         xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
         xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100))
+          if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100)
+            updateSingleStep('upload', { progress: pct })
+          }
         }
         xhr.onload = () => {
           if (xhr.status >= 200 && xhr.status < 300) resolve()
@@ -240,18 +376,56 @@ export default function UploadPage() {
         xhr.send(file)
       })
 
-      // 3. Upload thumbnail
-      let finalThumbnailPath: string | null = null
-      if (thumbnailBlob && thumbnail_upload_url) {
-        const thumbRes = await fetch(thumbnail_upload_url, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'image/webp' },
-          body: thumbnailBlob,
-        })
-        if (thumbRes.ok) finalThumbnailPath = thumbnail_storage_path
+      updateSingleStep('upload', { status: 'done', progress: 100 })
+
+      // ── Step 3: Generate thumbnail (sequential, blocking) ──
+      let finalThumbnailBlob: Blob | null = null
+
+      if (isVideoFile(file)) {
+        updateSingleStep('thumbnail-gen', { status: 'active' })
+        try {
+          const thumbResult = await generateThumbnail(file)
+          finalThumbnailBlob = thumbResult.blob
+          setThumbnailPreview(thumbResult.dataUrl)
+          updateSingleStep('thumbnail-gen', { status: 'done' })
+        } catch (thumbErr) {
+          console.warn('Thumbnail generation failed:', thumbErr)
+          updateSingleStep('thumbnail-gen', { status: 'skipped', error: 'Could not generate thumbnail' })
+          setThumbnailWarning('Thumbnail generation failed — video was uploaded without a thumbnail')
+        }
+      } else {
+        updateSingleStep('thumbnail-gen', { status: 'skipped' })
       }
 
-      // 4. Create media record
+      // ── Step 4: Upload thumbnail to R2 ──
+      let finalThumbnailPath: string | null = null
+
+      if (finalThumbnailBlob && thumbnail_upload_url) {
+        updateSingleStep('thumbnail-up', { status: 'active' })
+        try {
+          const thumbRes = await fetch(thumbnail_upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/webp' },
+            body: finalThumbnailBlob,
+          })
+          if (thumbRes.ok) {
+            finalThumbnailPath = thumbnail_storage_path
+            updateSingleStep('thumbnail-up', { status: 'done' })
+          } else {
+            throw new Error(`Thumbnail upload returned ${thumbRes.status}`)
+          }
+        } catch (thumbUpErr) {
+          console.warn('Thumbnail upload failed:', thumbUpErr)
+          updateSingleStep('thumbnail-up', { status: 'skipped', error: 'Thumbnail upload failed' })
+          setThumbnailWarning('Thumbnail could not be uploaded — video saved without thumbnail')
+        }
+      } else {
+        updateSingleStep('thumbnail-up', { status: 'skipped' })
+      }
+
+      // ── Step 5: Create media record ──
+      updateSingleStep('db-save', { status: 'active' })
+
       const createRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-media`,
         {
@@ -280,17 +454,24 @@ export default function UploadPage() {
       if (!createRes.ok) throw new Error(`Failed to create media: ${await createRes.text()}`)
 
       const { media_id } = await createRes.json()
-      navigate(`/video/${media_id}`)
+      updateSingleStep('db-save', { status: 'done' })
+
+      setCompletedMediaId(media_id)
+      setMode('single-done')
     } catch (err) {
       console.error('Upload error:', err)
-      setError(err instanceof Error ? err.message : 'Upload failed')
-      setMode('single-form')
+      const message = err instanceof Error ? err.message : 'Upload failed'
+      setError(message)
+
+      // Mark the currently active step as errored
+      setSingleSteps(prev => prev.map(s =>
+        s.status === 'active' ? { ...s, status: 'error' as const, error: message } : s
+      ))
     }
   }
 
   function resetAll() {
     setFile(null)
-    setThumbnailBlob(null)
     setThumbnailPreview(null)
     setDuration(null)
     setResolution(null)
@@ -299,11 +480,17 @@ export default function UploadPage() {
     setRecordedDate('')
     setSelectedTagIds([])
     setSelectedTags([])
-    setUploadProgress(0)
+    setSingleSteps([])
+    setCompletedMediaId(null)
+    setThumbnailWarning(null)
     setQueue([])
     setBulkTagIds([])
     setBulkTags([])
     setError(null)
+    if (preparingTimerRef.current) {
+      clearTimeout(preparingTimerRef.current)
+      preparingTimerRef.current = null
+    }
     setMode('select')
   }
 
@@ -312,6 +499,17 @@ export default function UploadPage() {
   const updateQueueItem = useCallback((id: string, updates: Partial<QueueItem>) => {
     setQueue(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item))
   }, [])
+
+  function updateQueueItemStep(id: string, stepName: UploadStepName, updates: Partial<UploadStep>) {
+    setQueue(prev => prev.map(qi => {
+      if (qi.id !== id) return qi
+      return {
+        ...qi,
+        currentStep: updates.status === 'active' ? stepName : qi.currentStep,
+        steps: qi.steps.map(s => s.name === stepName ? { ...s, ...updates } : s),
+      }
+    }))
+  }
 
   async function handleBulkFilesSelected(files: File[]) {
     setMode('bulk-queue')
@@ -331,6 +529,8 @@ export default function UploadPage() {
       progress: 0,
       error: null,
       mediaId: null,
+      steps: [],
+      currentStep: null,
     }))
 
     setQueue(items)
@@ -388,12 +588,15 @@ export default function UploadPage() {
   }
 
   async function uploadSingleItem(item: QueueItem, token: string): Promise<void> {
-    updateQueueItem(item.id, { status: 'uploading', progress: 0 })
+    const steps = createInitialSteps()
+    updateQueueItem(item.id, { status: 'uploading', progress: 0, steps, currentStep: 'presign' })
 
     try {
       const mediaType = determineMediaType(item.file)
 
-      // 1. Get presigned URLs
+      // ── Step 1: Get presigned URLs ──
+      updateQueueItemStep(item.id, 'presign', { status: 'active' })
+
       const urlRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-upload-url`,
         {
@@ -414,14 +617,20 @@ export default function UploadPage() {
 
       const { media_upload_url, media_storage_path, thumbnail_upload_url, thumbnail_storage_path } = await urlRes.json()
 
-      // 2. Upload file to R2
+      updateQueueItemStep(item.id, 'presign', { status: 'done' })
+
+      // ── Step 2: Upload file to R2 ──
+      updateQueueItemStep(item.id, 'upload', { status: 'active', progress: 0 })
+
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
         xhr.open('PUT', media_upload_url)
         xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
-            updateQueueItem(item.id, { progress: Math.round((e.loaded / e.total) * 100) })
+            const pct = Math.round((e.loaded / e.total) * 100)
+            updateQueueItemStep(item.id, 'upload', { progress: pct })
+            updateQueueItem(item.id, { progress: pct })
           }
         }
         xhr.onload = () => {
@@ -432,7 +641,52 @@ export default function UploadPage() {
         xhr.send(item.file)
       })
 
-      // 3. Create media record (without thumbnail — it will be added after)
+      updateQueueItemStep(item.id, 'upload', { status: 'done', progress: 100 })
+
+      // ── Step 3: Generate thumbnail (sequential, blocking) ──
+      let thumbBlob: Blob | null = null
+
+      if (isVideoFile(item.file)) {
+        updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'active' })
+        try {
+          const thumbResult = await generateThumbnail(item.file)
+          thumbBlob = thumbResult.blob
+          updateQueueItem(item.id, { thumbnailPreview: thumbResult.dataUrl })
+          updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'done' })
+        } catch {
+          updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'skipped', error: 'Thumbnail generation failed' })
+        }
+      } else {
+        updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'skipped' })
+      }
+
+      // ── Step 4: Upload thumbnail to R2 ──
+      let finalThumbnailPath: string | null = null
+
+      if (thumbBlob && thumbnail_upload_url) {
+        updateQueueItemStep(item.id, 'thumbnail-up', { status: 'active' })
+        try {
+          const thumbRes = await fetch(thumbnail_upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/webp' },
+            body: thumbBlob,
+          })
+          if (thumbRes.ok) {
+            finalThumbnailPath = thumbnail_storage_path
+            updateQueueItemStep(item.id, 'thumbnail-up', { status: 'done' })
+          } else {
+            throw new Error('Thumbnail upload failed')
+          }
+        } catch {
+          updateQueueItemStep(item.id, 'thumbnail-up', { status: 'skipped', error: 'Thumbnail upload failed' })
+        }
+      } else {
+        updateQueueItemStep(item.id, 'thumbnail-up', { status: 'skipped' })
+      }
+
+      // ── Step 5: Create media record (WITH thumbnail) ──
+      updateQueueItemStep(item.id, 'db-save', { status: 'active' })
+
       const createRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-media`,
         {
@@ -445,7 +699,7 @@ export default function UploadPage() {
             title: item.title,
             media_type: mediaType,
             storage_path: media_storage_path,
-            thumbnail_path: null,
+            thumbnail_path: finalThumbnailPath,
             duration: item.duration != null ? Math.round(item.duration) : null,
             recorded_at: item.recordedDate ? new Date(item.recordedDate).toISOString() : null,
             tag_ids: bulkTagIds,
@@ -460,31 +714,21 @@ export default function UploadPage() {
       if (!createRes.ok) throw new Error(`Failed to create media: ${await createRes.text()}`)
 
       const { media_id } = await createRes.json()
+      updateQueueItemStep(item.id, 'db-save', { status: 'done' })
       updateQueueItem(item.id, { status: 'done', progress: 100, mediaId: media_id })
-
-      // Background: generate thumbnail, upload to R2, and patch media record
-      if (isVideoFile(item.file) && thumbnail_upload_url) {
-        generateThumbnail(item.file)
-          .then(async (thumbResult) => {
-            const thumbRes = await fetch(thumbnail_upload_url, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'image/webp' },
-              body: thumbResult.blob,
-            })
-            if (thumbRes.ok) {
-              await supabase
-                .from('media')
-                .update({ thumbnail_path: thumbnail_storage_path })
-                .eq('id', media_id)
-            }
-          })
-          .catch(() => { /* Thumbnail failed — not critical */ })
-      }
     } catch (err) {
-      updateQueueItem(item.id, {
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Upload failed',
-      })
+      const message = err instanceof Error ? err.message : 'Upload failed'
+      setQueue(prev => prev.map(qi => {
+        if (qi.id !== item.id) return qi
+        return {
+          ...qi,
+          status: 'error' as const,
+          error: message,
+          steps: qi.steps.map(s =>
+            s.status === 'active' ? { ...s, status: 'error' as const, error: message } : s
+          ),
+        }
+      }))
     }
   }
 
@@ -498,7 +742,8 @@ export default function UploadPage() {
     setMode('bulk-uploading')
 
     const toUpload = queue.filter(item => item.status === 'ready')
-    await runWithConcurrency(toUpload.map(item => () => uploadSingleItem(item, token)), 2)
+    const concurrency = isMobileDevice() ? 1 : 2
+    await runWithConcurrency(toUpload.map(item => () => uploadSingleItem(item, token)), concurrency)
 
     setMode('bulk-done')
   }
@@ -513,7 +758,8 @@ export default function UploadPage() {
     setMode('bulk-uploading')
 
     const toRetry = queue.filter(item => item.status === 'error')
-    await runWithConcurrency(toRetry.map(item => () => uploadSingleItem(item, token)), 2)
+    const concurrency = isMobileDevice() ? 1 : 2
+    await runWithConcurrency(toRetry.map(item => () => uploadSingleItem(item, token)), concurrency)
 
     setMode('bulk-done')
   }
@@ -551,6 +797,7 @@ export default function UploadPage() {
             multiple
             className="hidden"
             onChange={handleFileInput}
+            onClick={handleFileInputClick}
             accept="video/*,image/*,audio/*"
           />
         </label>
@@ -558,27 +805,115 @@ export default function UploadPage() {
     )
   }
 
-  // ─── Render: single-file uploading (dedicated progress screen) ──────
+  // ─── Render: preparing files (iOS transcoding wait) ─────────────────────
+
+  if (mode === 'preparing') {
+    return (
+      <div className="flex flex-col items-center justify-center px-4 py-20">
+        <div className="mb-6 h-10 w-10 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
+        <p className="mb-2 text-base font-medium text-gray-900">Preparing files&hellip;</p>
+        <p className="max-w-xs text-center text-sm text-gray-500">
+          Your device is processing the selected videos. This may take a moment for large files.
+        </p>
+      </div>
+    )
+  }
+
+  // ─── Render: single-file uploading (step-by-step progress) ──────────────
 
   if (mode === 'single-uploading') {
     return (
-      <div className="flex flex-col items-center justify-center px-4 py-20">
-        <div className="mb-6 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
-        <p className="mb-2 text-sm font-medium text-gray-900">Uploading&hellip;</p>
-        <p className="mb-4 max-w-xs truncate text-xs text-gray-500">{file?.name}</p>
-        <div className="w-full max-w-xs">
-          <div className="mb-1 flex justify-between text-xs text-gray-500">
-            <span>{formatFileSize(file?.size ?? 0)}</span>
-            <span>{uploadProgress}%</span>
+      <div className="px-4 py-6">
+        {/* File info header */}
+        {file && (
+          <div className="mb-6 flex items-center gap-3">
+            <div className="h-12 w-18 shrink-0 overflow-hidden rounded-lg bg-gray-200">
+              {thumbnailPreview ? (
+                <img src={thumbnailPreview} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center">
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
+                </div>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-gray-900">{file.name}</p>
+              <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+            </div>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-gray-200">
-            <div
-              className="h-full rounded-full bg-blue-600 transition-all duration-300"
-              style={{ width: `${uploadProgress}%` }}
-            />
+        )}
+
+        <StepChecklist steps={singleSteps} />
+
+        {error && (
+          <div className="mt-6">
+            <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={resetAll}
+                className="flex-1 rounded-lg border border-gray-200 py-3 text-sm font-medium text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSingleUpload}
+                className="flex-1 rounded-lg bg-blue-600 py-3 text-sm font-medium text-white"
+              >
+                Retry
+              </button>
+            </div>
           </div>
+        )}
+
+        {thumbnailWarning && !error && (
+          <div className="mt-4 rounded-lg bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+            {thumbnailWarning}
+          </div>
+        )}
+
+        {!error && (
+          <p className="mt-6 text-center text-xs text-gray-400">Do not close this page</p>
+        )}
+      </div>
+    )
+  }
+
+  // ─── Render: single-file upload complete ────────────────────────────────
+
+  if (mode === 'single-done') {
+    return (
+      <div className="px-4 py-6">
+        <div className="mb-6 text-center">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
+            <span className="text-xl text-green-600">&#10003;</span>
+          </div>
+          <p className="text-lg font-semibold text-gray-900">Upload Complete</p>
         </div>
-        <p className="mt-6 text-xs text-gray-400">Do not close this page</p>
+
+        <StepChecklist steps={singleSteps} />
+
+        {thumbnailWarning && (
+          <div className="mt-4 rounded-lg bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
+            {thumbnailWarning}
+          </div>
+        )}
+
+        <div className="mt-6 space-y-2">
+          {completedMediaId && (
+            <button
+              onClick={() => navigate(`/video/${completedMediaId}`)}
+              className="w-full rounded-lg bg-blue-600 py-3 text-sm font-medium text-white"
+            >
+              View Video
+            </button>
+          )}
+          <button
+            onClick={resetAll}
+            className="w-full rounded-lg border border-gray-200 py-3 text-sm font-medium text-gray-700"
+          >
+            Upload Another
+          </button>
+        </div>
       </div>
     )
   }
@@ -788,13 +1123,21 @@ export default function UploadPage() {
                 {item.recordedDate && ` \u00b7 ${item.recordedDate}`}
               </p>
 
-              {/* Per-item progress bar */}
-              {item.status === 'uploading' && (
-                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200">
-                  <div
-                    className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                    style={{ width: `${item.progress}%` }}
-                  />
+              {/* Per-item step indicator during upload */}
+              {item.status === 'uploading' && item.currentStep && (
+                <div className="mt-1">
+                  <p className="text-xs text-blue-500">
+                    {item.steps.find(s => s.status === 'active')?.label ?? 'Processing...'}
+                    {item.currentStep === 'upload' && ` ${item.progress}%`}
+                  </p>
+                  {item.currentStep === 'upload' && (
+                    <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-gray-200">
+                      <div
+                        className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                        style={{ width: `${item.progress}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -821,7 +1164,14 @@ export default function UploadPage() {
                   &times;
                 </button>
               )}
-              {item.status === 'done' && (
+              {item.status === 'done' && item.mediaId && mode === 'bulk-done' ? (
+                <button
+                  onClick={() => navigate(`/video/${item.mediaId}`)}
+                  className="text-xs text-blue-600 hover:text-blue-800"
+                >
+                  View
+                </button>
+              ) : item.status === 'done' && (
                 <span className="text-xs text-green-600">&#10003;</span>
               )}
               {item.status === 'uploading' && (
