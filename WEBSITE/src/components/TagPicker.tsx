@@ -8,6 +8,7 @@ interface TagPickerProps {
   onChange: (tagIds: string[]) => void
   onClose: () => void
   allowCreate: boolean
+  multiSelect?: boolean
 }
 
 interface TagWithCategory extends Tag {
@@ -19,6 +20,7 @@ export default function TagPicker({
   onChange,
   onClose,
   allowCreate,
+  multiSelect = true,
 }: TagPickerProps) {
   const { user } = useAuth()
   const [tags, setTags] = useState<TagWithCategory[]>([])
@@ -92,10 +94,16 @@ export default function TagPicker({
   }, [tags, search])
 
   function toggleTag(tagId: string) {
-    if (selectedTagIds.includes(tagId)) {
-      onChange(selectedTagIds.filter((id) => id !== tagId))
+    if (multiSelect) {
+      if (selectedTagIds.includes(tagId)) {
+        onChange(selectedTagIds.filter((id) => id !== tagId))
+      } else {
+        onChange([...selectedTagIds, tagId])
+      }
     } else {
-      onChange([...selectedTagIds, tagId])
+      // Single-select: pick one and close
+      onChange([tagId])
+      onClose()
     }
   }
 
@@ -171,7 +179,7 @@ export default function TagPicker({
 
         {/* Header */}
         <div className="flex items-center justify-between px-4 pb-2">
-          <h2 className="text-lg font-semibold text-gray-900">Select Tags</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{multiSelect ? 'Select Tags' : 'Select Tag'}</h2>
           <button
             onClick={onClose}
             className="text-sm text-gray-500"
@@ -232,7 +240,7 @@ export default function TagPicker({
                         }`}
                       >
                         <span
-                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center ${multiSelect ? 'rounded' : 'rounded-full'} border text-xs ${
                             selected
                               ? 'border-blue-600 bg-blue-600 text-white'
                               : 'border-gray-300'
