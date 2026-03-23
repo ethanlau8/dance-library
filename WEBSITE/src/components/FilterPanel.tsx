@@ -17,6 +17,9 @@ interface TagWithCategory extends Tag {
 
 const TAGS_VISIBLE_PER_CATEGORY = 5
 
+// Module-level cache — persists for the page session, avoids re-fetching on every panel open
+let cachedTags: TagWithCategory[] | null = null
+
 export default function FilterPanel({
   isOpen,
   onClose,
@@ -50,6 +53,12 @@ export default function FilterPanel({
   }, [isOpen, activeTags, activeDateRange, activeMediaType])
 
   async function fetchTags() {
+    if (cachedTags) {
+      setAllTags(cachedTags)
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     const { data, error } = await supabase
       .from('tags')
@@ -67,6 +76,7 @@ export default function FilterPanel({
       category_name: t.tag_categories?.name ?? 'Uncategorized',
     }))
 
+    cachedTags = mapped
     setAllTags(mapped)
     setLoading(false)
   }

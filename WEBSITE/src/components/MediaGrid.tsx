@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
 import LazyImage from './LazyImage'
@@ -10,6 +10,7 @@ interface MediaGridProps {
   onLoadMore: () => void
   hasMore: boolean
   mediaTags?: Record<string, Tag[]>
+  scrollRef?: RefObject<HTMLDivElement | null>
 }
 
 function formatDuration(seconds: number): string {
@@ -20,7 +21,7 @@ function formatDuration(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaTags }: MediaGridProps) {
+export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaTags, scrollRef }: MediaGridProps) {
   const navigate = useNavigate()
   const sentinelRef = useRef<HTMLDivElement>(null)
 
@@ -34,12 +35,12 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
           onLoadMore()
         }
       },
-      { rootMargin: '200px' }
+      { rootMargin: '200px', root: scrollRef?.current ?? null }
     )
 
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [hasMore, onLoadMore])
+  }, [hasMore, onLoadMore, scrollRef])
 
   if (viewMode === 'grid') {
     return (

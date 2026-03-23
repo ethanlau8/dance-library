@@ -25,6 +25,8 @@ interface UseMediaResult {
 
 const PAGE_SIZE = 24
 
+const MEDIA_WITH_TAGS_SELECT = '*, media_tags(media_id, tag_id, start_time, tags(id, name, description, category_id, is_folder, created_by, created_at))'
+
 export function useMedia(options: UseMediaOptions): UseMediaResult {
   const { sortBy, tagFilters, fromDate, toDate, folderTagId, mediaType } = options
   const [media, setMedia] = useState<Media[]>([])
@@ -51,7 +53,6 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
 
       if (allTagIds.length > 0) {
         // Tag filtering with AND logic: find media_ids that have ALL required tags
-        // Step 1: get matching media_ids
         const { data: tagMatches } = await supabase
           .from('media_tags')
           .select('media_id, tag_id')
@@ -66,7 +67,7 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
           return
         }
 
-        // Group by media_id and count distinct tags
+        // Group by media_id and count distinct tags — AND logic
         const mediaTagCounts: Record<string, Set<string>> = {}
         for (const mt of tagMatches) {
           if (!mediaTagCounts[mt.media_id]) mediaTagCounts[mt.media_id] = new Set()
@@ -86,10 +87,10 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
           return
         }
 
-        // Step 2: fetch those media items with sorting and pagination
+        // Fetch media with embedded tags in a single query
         let query = supabase
           .from('media')
-          .select('*', { count: 'exact' })
+          .select(MEDIA_WITH_TAGS_SELECT, { count: 'exact' })
           .in('id', matchingIds)
 
         if (mediaType) query = query.eq('media_type', mediaType)
@@ -101,16 +102,21 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
         if (error) throw error
 
         const items = data || []
-        if (append) setMedia(prev => [...prev, ...items])
-        else setMedia(items)
+        const { mediaItems, tagMap } = extractTags(items)
+        if (append) {
+          setMedia(prev => [...prev, ...mediaItems])
+          setMediaTags(prev => ({ ...prev, ...tagMap }))
+        } else {
+          setMedia(mediaItems)
+          setMediaTags(tagMap)
+        }
         setTotalCount(count ?? 0)
         setHasMore(items.length === PAGE_SIZE)
-        await fetchTagsForMedia(items, append)
       } else {
-        // No tag filters
+        // No tag filters — single query with embedded tags
         let query = supabase
           .from('media')
-          .select('*', { count: 'exact' })
+          .select(MEDIA_WITH_TAGS_SELECT, { count: 'exact' })
 
         if (mediaType) query = query.eq('media_type', mediaType)
         query = applyDateFilter(query, fromDate, toDate)
@@ -121,11 +127,16 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
         if (error) throw error
 
         const items = data || []
-        if (append) setMedia(prev => [...prev, ...items])
-        else setMedia(items)
+        const { mediaItems, tagMap } = extractTags(items)
+        if (append) {
+          setMedia(prev => [...prev, ...mediaItems])
+          setMediaTags(prev => ({ ...prev, ...tagMap }))
+        } else {
+          setMedia(mediaItems)
+          setMediaTags(tagMap)
+        }
         setTotalCount(count ?? 0)
         setHasMore(items.length === PAGE_SIZE)
-        await fetchTagsForMedia(items, append)
       }
     } catch (err) {
       console.error('Error fetching media:', err)
@@ -135,38 +146,6 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sortBy, JSON.stringify(allTagIds), fromDate, toDate, mediaType])
-
-  const fetchTagsForMedia = async (items: Media[], append: boolean) => {
-    if (items.length === 0) return
-    const mediaIds = items.map(m => m.id)
-
-    const { data: mtData } = await supabase
-      .from('media_tags')
-      .select('media_id, tag_id, start_time, tags(id, name, description, category_id, is_folder, created_by, created_at)')
-      .in('media_id', mediaIds)
-      .is('start_time', null)
-
-    if (!mtData) return
-
-    const tagMap: Record<string, Tag[]> = {}
-    for (const mt of mtData as unknown as Array<{ media_id: string; tag_id: string; start_time: number | null; tags: Tag | Tag[] }>) {
-      if (!mt.tags) continue
-      // Supabase may return the join as an object or array depending on relationship
-      const tag: Tag = Array.isArray(mt.tags) ? mt.tags[0] : mt.tags
-      if (!tag) continue
-      if (!tagMap[mt.media_id]) tagMap[mt.media_id] = []
-      // Deduplicate by tag id
-      if (!tagMap[mt.media_id].some(t => t.id === tag.id)) {
-        tagMap[mt.media_id].push(tag)
-      }
-    }
-
-    if (append) {
-      setMediaTags(prev => ({ ...prev, ...tagMap }))
-    } else {
-      setMediaTags(tagMap)
-    }
-  }
 
   // Reset and fetch when filters change
   useEffect(() => {
@@ -182,6 +161,41 @@ export function useMedia(options: UseMediaOptions): UseMediaResult {
   }, [loadingMore, hasMore, fetchMedia])
 
   return { media, totalCount, loading, loadingMore, hasMore, loadMore, mediaTags }
+}
+
+/**
+ * Extract nested media_tags from Supabase join results into a flat tag map,
+ * and strip the media_tags property from each media item.
+ * Only includes video-level tags (start_time is null).
+ */
+function extractTags(items: any[]): { mediaItems: Media[]; tagMap: Record<string, Tag[]> } {
+  const tagMap: Record<string, Tag[]> = {}
+  const mediaItems: Media[] = []
+
+  for (const item of items) {
+    const { media_tags: rawTags, ...mediaFields } = item
+    mediaItems.push(mediaFields as Media)
+
+    if (!rawTags || !Array.isArray(rawTags)) continue
+
+    const tags: Tag[] = []
+    for (const mt of rawTags) {
+      // Only video-level tags (no timestamp tags)
+      if (mt.start_time != null) continue
+      if (!mt.tags) continue
+      const tag: Tag = Array.isArray(mt.tags) ? mt.tags[0] : mt.tags
+      if (!tag) continue
+      // Deduplicate
+      if (!tags.some(t => t.id === tag.id)) {
+        tags.push(tag)
+      }
+    }
+    if (tags.length > 0) {
+      tagMap[item.id] = tags
+    }
+  }
+
+  return { mediaItems, tagMap }
 }
 
 function applyDateFilter(

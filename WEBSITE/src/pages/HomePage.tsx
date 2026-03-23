@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useMedia, type SortBy } from '../hooks/useMedia'
@@ -91,27 +91,29 @@ export default function HomePage() {
     setActiveMediaType(mediaType)
   }
 
+  const scrollRef = useRef<HTMLDivElement>(null)
+
   return (
-    <div className="pb-8">
-      {/* Search bar */}
-      <div className="sticky top-14 z-20 bg-white px-4 py-2">
-        <button
-          onClick={() => setIsSearchOpen(true)}
-          className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-left text-sm text-gray-400"
-        >
-          Search moves...
-        </button>
-      </div>
+    <div className="flex flex-1 flex-col overflow-hidden">
+      {/* ── Static controls (do not scroll) ── */}
+      <div className="flex-shrink-0">
+        {/* Search bar */}
+        <div className="bg-white px-4 py-2">
+          <button
+            onClick={() => setIsSearchOpen(true)}
+            className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2.5 text-left text-sm text-gray-400"
+          >
+            Search moves...
+          </button>
+        </div>
 
-      {/* Continue Watching */}
-      <ContinueWatchingRow items={continueWatchingItems} />
+        {/* Continue Watching */}
+        <ContinueWatchingRow items={continueWatchingItems} />
 
-      {/* Folders */}
-      <FoldersRow folders={folders} />
+        {/* Folders */}
+        <FoldersRow folders={folders} />
 
-      {/* All Videos section */}
-      <section>
-        {/* Header */}
+        {/* All Videos header */}
         <div className="flex items-center justify-between px-4 py-2">
           <h2 className="text-sm font-semibold text-gray-700">
             All Videos ({totalCount})
@@ -170,8 +172,10 @@ export default function HomePage() {
           onClearDates={handleClearDates}
           onClearMediaType={() => setActiveMediaType(null)}
         />
+      </div>
 
-        {/* Media grid */}
+      {/* ── Scrollable grid ── */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto pb-8">
         {loading ? (
           <div className="flex justify-center py-12">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
@@ -185,9 +189,10 @@ export default function HomePage() {
             onLoadMore={loadMore}
             hasMore={hasMore}
             mediaTags={mediaTags}
+            scrollRef={scrollRef}
           />
         )}
-      </section>
+      </div>
 
       {/* Search Overlay */}
       <SearchOverlay
