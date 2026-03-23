@@ -12,7 +12,9 @@
       "Bash(git add WEBSITE/src/components/ContinueWatchingRow.tsx WEBSITE/src/components/FilterPanel.tsx WEBSITE/src/components/Layout.tsx WEBSITE/src/components/MediaGrid.tsx WEBSITE/src/components/TagPicker.tsx WEBSITE/src/components/VideoPlayer.tsx WEBSITE/src/pages/VideoDetailPage.tsx)",
       "Bash(npx tsc --noEmit)",
       "Bash(git status -u)",
-      "Bash(xxd -l 200 -s 5900 WEBSITE/src/pages/UploadPage.tsx)"
+      "Bash(xxd -l 200 -s 5900 WEBSITE/src/pages/UploadPage.tsx)",
+      "WebFetch(domain:community.cloudflare.com)",
+      "WebFetch(domain:supabase.com)"
     ]
   }
 }

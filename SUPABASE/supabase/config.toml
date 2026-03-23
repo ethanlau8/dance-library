@@ -1,0 +1,17 @@
+[functions.create-media]
+verify_jwt = false
+
+[functions.delete-media]
+verify_jwt = false
+
+[functions.get-media-url]
+verify_jwt = false
+
+[functions.get-upload-url]
+verify_jwt = false
+
+[functions.replace-media]
+verify_jwt = false
+
+[functions.update-media]
+verify_jwt = false

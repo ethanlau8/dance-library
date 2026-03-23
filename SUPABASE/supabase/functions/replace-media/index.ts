@@ -1,8 +1,8 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import {
   S3Client,
   DeleteObjectCommand,
-} from "https://esm.sh/@aws-sdk/client-s3@3";
+} from "npm:@aws-sdk/client-s3@3.726.1";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
