@@ -72,7 +72,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { filename, content_type } = body;
+  const { filename, content_type, type } = body;
   if (!filename || !content_type) {
     return new Response(JSON.stringify({ error: "filename and content_type are required" }), {
       status: 400,
@@ -80,11 +80,8 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Generate unique storage keys
   const uuid = crypto.randomUUID();
   const ext = filename.includes(".") ? filename.split(".").pop() : "bin";
-  const mediaStoragePath = `videos/${uuid}.${ext}`;
-  const thumbnailStoragePath = `thumbs/${uuid}.webp`;
 
   // Build R2 S3 client
   const r2 = new S3Client({
@@ -99,7 +96,40 @@ Deno.serve(async (req: Request) => {
   const bucketName = Deno.env.get("R2_BUCKET_NAME")!;
   const expiresIn = 900; // 15 minutes
 
-  // Generate presigned PUT URL for media
+  if (type === "image") {
+    // Images: store the file itself in thumbs/ — no separate video file needed.
+    // ContentType is intentionally omitted so R2 doesn't enforce a specific type,
+    // which handles HEIC (no MIME type on iOS), PNG fallback from canvas, etc.
+    const thumbnailStoragePath = `thumbs/${uuid}.${ext}`;
+    const thumbnailUploadUrl = await getSignedUrl(
+      r2,
+      new PutObjectCommand({
+        Bucket: bucketName,
+        Key: thumbnailStoragePath,
+      }),
+      { expiresIn }
+    );
+
+    return new Response(
+      JSON.stringify({
+        media_upload_url: null,
+        media_storage_path: null,
+        thumbnail_upload_url: thumbnailUploadUrl,
+        thumbnail_storage_path: thumbnailStoragePath,
+      }),
+      {
+        status: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  // Videos / audio / other: generate presigned URLs for both the media file and thumbnail.
+  // ContentType is omitted from the thumbnail command so that iOS canvas fallbacks
+  // (PNG instead of WebP) and future format changes don't cause silent upload failures.
+  const mediaStoragePath = `videos/${uuid}.${ext}`;
+  const thumbnailStoragePath = `thumbs/${uuid}.webp`;
+
   const mediaUploadUrl = await getSignedUrl(
     r2,
     new PutObjectCommand({
@@ -110,13 +140,11 @@ Deno.serve(async (req: Request) => {
     { expiresIn }
   );
 
-  // Generate presigned PUT URL for thumbnail
   const thumbnailUploadUrl = await getSignedUrl(
     r2,
     new PutObjectCommand({
       Bucket: bucketName,
       Key: thumbnailStoragePath,
-      ContentType: "image/webp",
     }),
     { expiresIn }
   );

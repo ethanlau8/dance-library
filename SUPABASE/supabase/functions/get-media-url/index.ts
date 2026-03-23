@@ -85,6 +85,14 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Images have no video file — return null url so the client can skip the player
+  if (!media.storage_path) {
+    return new Response(
+      JSON.stringify({ url: null, expires_in: 0 }),
+      { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+    );
+  }
+
   // Build R2 S3 client
   const r2 = new S3Client({
     region: "auto",

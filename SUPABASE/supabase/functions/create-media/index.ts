@@ -82,8 +82,8 @@ Deno.serve(async (req: Request) => {
 
   const { title, description, media_type, storage_path, thumbnail_path, duration, recorded_at, tag_ids, original_filename, file_size_bytes, mime_type, resolution } = body;
 
-  if (!title || !media_type || !storage_path) {
-    return new Response(JSON.stringify({ error: "title, media_type, and storage_path are required" }), {
+  if (!title || !media_type) {
+    return new Response(JSON.stringify({ error: "title and media_type are required" }), {
       status: 400,
       headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
     });

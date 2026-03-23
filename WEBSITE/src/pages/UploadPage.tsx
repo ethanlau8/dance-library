@@ -16,6 +16,13 @@ function isVideoFile(file: File): boolean {
   return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'hevc', '3gp'].includes(ext)
 }
 
+// Images from iOS camera roll often have file.type === '' — check extension too (e.g. HEIC)
+function isImageFile(file: File): boolean {
+  if (file.type.startsWith('image/')) return true
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  return ['heic', 'heif', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif'].includes(ext)
+}
+
 /**
  * Best-effort recorded date extraction from a File object alone.
  *
@@ -50,7 +57,7 @@ function extractRecordedDateFromFile(file: File): string | null {
 
 function determineMediaType(file: File): string {
   if (isVideoFile(file)) return 'video'
-  if (file.type.startsWith('image/')) return 'image'
+  if (isImageFile(file)) return 'image'
   if (file.type.startsWith('audio/')) return 'audio'
   return 'other'
 }
@@ -309,8 +316,11 @@ export default function UploadPage() {
         })
         .catch(() => { /* Preview failed — no problem, upload pipeline handles it */ })
         .finally(() => setGeneratingThumb(false))
-    } else if (selectedFile.type.startsWith('image/')) {
-      setThumbnailPreview(URL.createObjectURL(selectedFile))
+    } else if (isImageFile(selectedFile)) {
+      const ext = selectedFile.name.split('.').pop()?.toLowerCase() ?? ''
+      if (!['heic', 'heif'].includes(ext)) {
+        setThumbnailPreview(URL.createObjectURL(selectedFile))
+      }
     }
   }
 
@@ -354,36 +364,43 @@ export default function UploadPage() {
 
       updateSingleStep('presign', { status: 'done' })
 
-      // ── Step 2: Upload file to R2 ──
-      updateSingleStep('upload', { status: 'active', progress: 0 })
+      // ── Step 2: Upload file to R2 (skipped for images — they go to thumbs/ instead) ──
+      if (mediaType === 'image') {
+        updateSingleStep('upload', { status: 'skipped' })
+      } else {
+        updateSingleStep('upload', { status: 'active', progress: 0 })
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        // Register upload listener BEFORE open() — some browsers
-        // suppress cross-origin progress events if attached after open()
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100)
-            updateSingleStep('upload', { progress: pct })
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          // Register upload listener BEFORE open() — some browsers
+          // suppress cross-origin progress events if attached after open()
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100)
+              updateSingleStep('upload', { progress: pct })
+            }
           }
-        }
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve()
-          else reject(new Error(`Upload failed with status ${xhr.status}`))
-        }
-        xhr.onerror = () => reject(new Error('Upload failed'))
-        xhr.open('PUT', media_upload_url)
-        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-        xhr.send(file)
-      })
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve()
+            else reject(new Error(`Upload failed with status ${xhr.status}`))
+          }
+          xhr.onerror = () => reject(new Error('Upload failed'))
+          xhr.open('PUT', media_upload_url)
+          xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+          xhr.send(file)
+        })
 
-      updateSingleStep('upload', { status: 'done', progress: 100 })
+        updateSingleStep('upload', { status: 'done', progress: 100 })
+      }
 
       // ── Step 3: Generate thumbnail (sequential, blocking) ──
       let finalThumbnailBlob: Blob | null = null
 
       if (skipThumbnails) {
         updateSingleStep('thumbnail-gen', { status: 'skipped', error: 'Skipped by user' })
+      } else if (mediaType === 'image') {
+        // Image IS the thumbnail — no generation needed
+        updateSingleStep('thumbnail-gen', { status: 'skipped' })
       } else if (isVideoFile(file)) {
         updateSingleStep('thumbnail-gen', { status: 'active' })
         try {
@@ -405,12 +422,31 @@ export default function UploadPage() {
 
       if (skipThumbnails) {
         updateSingleStep('thumbnail-up', { status: 'skipped', error: 'Skipped by user' })
+      } else if (mediaType === 'image' && thumbnail_upload_url) {
+        // Upload the image file itself to thumbs/ — it serves as its own thumbnail
+        updateSingleStep('thumbnail-up', { status: 'active' })
+        try {
+          const thumbRes = await fetch(thumbnail_upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            body: file,
+          })
+          if (thumbRes.ok) {
+            finalThumbnailPath = thumbnail_storage_path
+            updateSingleStep('thumbnail-up', { status: 'done' })
+          } else {
+            throw new Error(`Image upload returned ${thumbRes.status}`)
+          }
+        } catch (thumbUpErr) {
+          console.warn('Image upload failed:', thumbUpErr)
+          updateSingleStep('thumbnail-up', { status: 'skipped', error: 'Image upload failed' })
+        }
       } else if (finalThumbnailBlob && thumbnail_upload_url) {
         updateSingleStep('thumbnail-up', { status: 'active' })
         try {
           const thumbRes = await fetch(thumbnail_upload_url, {
             method: 'PUT',
-            headers: { 'Content-Type': 'image/webp' },
+            headers: { 'Content-Type': finalThumbnailBlob.type || 'image/webp' },
             body: finalThumbnailBlob,
           })
           if (thumbRes.ok) {
@@ -443,7 +479,7 @@ export default function UploadPage() {
             title: title.trim(),
             description: description.trim() || null,
             media_type: mediaType,
-            storage_path: media_storage_path,
+            storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: duration != null ? Math.round(duration) : null,
             recorded_at: recordedDate ? new Date(recordedDate).toISOString() : null,
@@ -568,7 +604,11 @@ export default function UploadPage() {
         ...item,
         duration,
         resolution,
-        thumbnailPreview: item.file.type.startsWith('image/') ? URL.createObjectURL(item.file) : null,
+        thumbnailPreview: (() => {
+        if (!isImageFile(item.file)) return null
+        const ext = item.file.name.split('.').pop()?.toLowerCase() ?? ''
+        return ['heic', 'heif'].includes(ext) ? null : URL.createObjectURL(item.file)
+      })(),
         status: dupeNames.has(item.file.name) ? 'duplicate' as const : 'ready' as const,
       }
     }))
@@ -621,35 +661,42 @@ export default function UploadPage() {
 
       updateQueueItemStep(item.id, 'presign', { status: 'done' })
 
-      // ── Step 2: Upload file to R2 ──
-      updateQueueItemStep(item.id, 'upload', { status: 'active', progress: 0 })
+      // ── Step 2: Upload file to R2 (skipped for images — they go to thumbs/ instead) ──
+      if (mediaType === 'image') {
+        updateQueueItemStep(item.id, 'upload', { status: 'skipped' })
+      } else {
+        updateQueueItemStep(item.id, 'upload', { status: 'active', progress: 0 })
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100)
-            updateQueueItemStep(item.id, 'upload', { progress: pct })
-            updateQueueItem(item.id, { progress: pct })
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest()
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100)
+              updateQueueItemStep(item.id, 'upload', { progress: pct })
+              updateQueueItem(item.id, { progress: pct })
+            }
           }
-        }
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve()
-          else reject(new Error(`Upload failed with status ${xhr.status}`))
-        }
-        xhr.onerror = () => reject(new Error('Upload failed'))
-        xhr.open('PUT', media_upload_url)
-        xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
-        xhr.send(item.file)
-      })
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve()
+            else reject(new Error(`Upload failed with status ${xhr.status}`))
+          }
+          xhr.onerror = () => reject(new Error('Upload failed'))
+          xhr.open('PUT', media_upload_url)
+          xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
+          xhr.send(item.file)
+        })
 
-      updateQueueItemStep(item.id, 'upload', { status: 'done', progress: 100 })
+        updateQueueItemStep(item.id, 'upload', { status: 'done', progress: 100 })
+      }
 
       // ── Step 3: Generate thumbnail (sequential, blocking) ──
       let thumbBlob: Blob | null = null
 
       if (skipThumbnails) {
         updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'skipped', error: 'Skipped by user' })
+      } else if (mediaType === 'image') {
+        // Image IS the thumbnail — no generation needed
+        updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'skipped' })
       } else if (isVideoFile(item.file)) {
         updateQueueItemStep(item.id, 'thumbnail-gen', { status: 'active' })
         try {
@@ -669,12 +716,30 @@ export default function UploadPage() {
 
       if (skipThumbnails) {
         updateQueueItemStep(item.id, 'thumbnail-up', { status: 'skipped', error: 'Skipped by user' })
+      } else if (mediaType === 'image' && thumbnail_upload_url) {
+        // Upload the image file itself to thumbs/ — it serves as its own thumbnail
+        updateQueueItemStep(item.id, 'thumbnail-up', { status: 'active' })
+        try {
+          const thumbRes = await fetch(thumbnail_upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': item.file.type || 'application/octet-stream' },
+            body: item.file,
+          })
+          if (thumbRes.ok) {
+            finalThumbnailPath = thumbnail_storage_path
+            updateQueueItemStep(item.id, 'thumbnail-up', { status: 'done' })
+          } else {
+            throw new Error('Image upload failed')
+          }
+        } catch {
+          updateQueueItemStep(item.id, 'thumbnail-up', { status: 'skipped', error: 'Image upload failed' })
+        }
       } else if (thumbBlob && thumbnail_upload_url) {
         updateQueueItemStep(item.id, 'thumbnail-up', { status: 'active' })
         try {
           const thumbRes = await fetch(thumbnail_upload_url, {
             method: 'PUT',
-            headers: { 'Content-Type': 'image/webp' },
+            headers: { 'Content-Type': thumbBlob.type || 'image/webp' },
             body: thumbBlob,
           })
           if (thumbRes.ok) {
@@ -704,7 +769,7 @@ export default function UploadPage() {
           body: JSON.stringify({
             title: item.title,
             media_type: mediaType,
-            storage_path: media_storage_path,
+            storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: item.duration != null ? Math.round(item.duration) : null,
             recorded_at: item.recordedDate ? new Date(item.recordedDate).toISOString() : null,

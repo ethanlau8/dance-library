@@ -27,7 +27,7 @@ export interface Media {
   title: string
   description: string | null
   media_type: string
-  storage_path: string
+  storage_path: string | null
   thumbnail_path: string | null
   duration: number | null
   recorded_at: string | null

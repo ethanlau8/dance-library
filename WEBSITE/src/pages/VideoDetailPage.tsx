@@ -176,7 +176,7 @@ export default function VideoDetailPage() {
 
       if (urlRes.url) {
         setVideoUrl(urlRes.url)
-      } else {
+      } else if (mediaRes.data?.media_type !== 'image') {
         setError('Could not load video URL')
       }
     } catch (err) {
@@ -567,7 +567,7 @@ export default function VideoDetailPage() {
       if (thumbBlob && thumbnail_upload_url) {
         const thumbRes = await fetch(thumbnail_upload_url, {
           method: 'PUT',
-          headers: { 'Content-Type': 'image/jpeg' },
+          headers: { 'Content-Type': 'image/webp' },
           body: thumbBlob,
         })
         if (!thumbRes.ok) {
@@ -739,8 +739,16 @@ export default function VideoDetailPage() {
       <div className="lg:grid lg:grid-cols-[1fr_420px] lg:gap-6 lg:px-4">
         {/* Left column: Video player */}
         <div className="lg:sticky lg:top-14 lg:self-start">
-          {/* Video player */}
-          {videoUrl && initialPosition !== null ? (
+          {/* Media display: image or video player */}
+          {media?.media_type === 'image' ? (
+            <div className="flex w-full items-center justify-center bg-black">
+              <img
+                src={thumbnailUrl(media.thumbnail_path)}
+                alt={media.title}
+                className="w-full object-contain max-h-[60vh] lg:max-h-[80vh]"
+              />
+            </div>
+          ) : videoUrl && initialPosition !== null ? (
             <div className="relative">
               <VideoPlayer
                 ref={videoRef}
@@ -959,7 +967,7 @@ export default function VideoDetailPage() {
                 ))}
               </div>
 
-              {isEditMode && tsCreationStep === 'idle' && (
+              {isEditMode && tsCreationStep === 'idle' && media?.media_type !== 'image' && (
                 <button
                   onClick={startAddTimestamp}
                   className="mt-2 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:border-gray-400 w-full text-left"
@@ -970,8 +978,8 @@ export default function VideoDetailPage() {
             </section>
           )}
 
-          {/* Replace Video File (edit mode only) */}
-          {isEditMode && (
+          {/* Replace Video File (edit mode only, videos only) */}
+          {isEditMode && media?.media_type !== 'image' && (
             <section className="mt-6 px-4 lg:px-0">
               <div className="mb-3 border-t border-gray-200" />
               <h2 className="mb-2 text-sm font-semibold text-gray-700">Replace Video File</h2>
@@ -1030,7 +1038,7 @@ export default function VideoDetailPage() {
                 onClick={() => setShowDeleteConfirm(true)}
                 className="w-full rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-100"
               >
-                Delete this video
+                Delete this {media?.media_type === 'image' ? 'image' : 'video'}
               </button>
             </section>
           )}

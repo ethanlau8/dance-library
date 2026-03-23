@@ -109,9 +109,12 @@ Deno.serve(async (req: Request) => {
 
   const bucketName = Deno.env.get("R2_BUCKET_NAME")!;
 
-  const deleteOps: Promise<unknown>[] = [
-    r2.send(new DeleteObjectCommand({ Bucket: bucketName, Key: media.storage_path })),
-  ];
+  const deleteOps: Promise<unknown>[] = [];
+  if (media.storage_path) {
+    deleteOps.push(
+      r2.send(new DeleteObjectCommand({ Bucket: bucketName, Key: media.storage_path }))
+    );
+  }
   if (media.thumbnail_path) {
     deleteOps.push(
       r2.send(new DeleteObjectCommand({ Bucket: bucketName, Key: media.thumbnail_path }))
