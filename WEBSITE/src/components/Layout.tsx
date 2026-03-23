@@ -77,7 +77,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       )}
 
       {/* Content */}
-      <main className="mx-auto mt-14 max-w-6xl flex-1">
+      <main className="mx-auto mt-14 w-full max-w-6xl flex-1 overflow-x-hidden">
         {children}
       </main>
     </div>

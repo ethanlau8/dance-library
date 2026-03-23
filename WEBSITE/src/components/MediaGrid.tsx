@@ -12,6 +12,14 @@ interface MediaGridProps {
   mediaTags?: Record<string, Tag[]>
 }
 
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaTags }: MediaGridProps) {
   const navigate = useNavigate()
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -48,6 +56,11 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
                 alt={item.title}
                 className="h-full w-full"
               />
+              {item.duration != null && item.duration > 0 && (
+                <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] font-medium text-white">
+                  {formatDuration(item.duration)}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -75,6 +88,11 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
                   alt={item.title}
                   className="h-full w-full"
                 />
+                {item.duration != null && item.duration > 0 && (
+                  <span className="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1 text-[11px] font-medium text-white">
+                    {formatDuration(item.duration)}
+                  </span>
+                )}
               </div>
               <h3 className="mt-2 font-medium text-gray-900">{item.title}</h3>
               {tags.length > 0 && (
