@@ -19,7 +19,16 @@
       "Bash(xargs grep -l \"VideoPlayer\\\\|useWatchProgress\\\\|useContinueWatching\")",
       "Bash(git add .gitignore WEBSITE/src/pages/UploadPage.tsx WEBSITE/src/pages/VideoDetailPage.tsx TESTING/backfill_recorded_at.ipynb)",
       "Bash(grep -i \"metadata\" /c/Users/minds/Videos/DANCE/dance-library/SUPABASE/supabase/migrations/*.sql)",
-      "WebFetch(domain:wiki.multimedia.cx)"
+      "WebFetch(domain:wiki.multimedia.cx)",
+      "Bash(python3 -:*)",
+      "Bash(py --version)",
+      "Bash(python3.11 --version)",
+      "Bash(python -:*)",
+      "Bash(ffmpeg -version)",
+      "Bash(ffprobe -version)",
+      "Bash(/c/Users/minds/AppData/Local/Programs/ffmpeg/bin/ffmpeg.exe -version)",
+      "Bash(command -v ffmpeg)",
+      "Bash(command -v ffprobe)"
     ]
   }
 }

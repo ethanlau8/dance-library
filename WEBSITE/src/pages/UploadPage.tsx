@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
-import { generateThumbnail, extractVideoMetadata } from '../lib/ffmpeg'
+import { generateThumbnail, extractVideoMetadata, extractFileMetadata } from '../lib/ffmpeg'
 import { runWithConcurrency } from '../lib/concurrency'
 import { formatFileSize, formatDuration } from '../lib/format'
 import TagPicker from '../components/TagPicker'
@@ -70,11 +70,22 @@ function extractRecordedDateFromFile(file: File): string | null {
   return null
 }
 
-function determineMediaType(file: File): string {
+function determineMediaType(file: File): 'video' | 'image' | 'other' {
   if (isVideoFile(file)) return 'video'
   if (isImageFile(file)) return 'image'
-  if (file.type.startsWith('audio/')) return 'audio'
   return 'other'
+}
+
+function guessMimeType(filename: string): string | null {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? ''
+  const map: Record<string, string> = {
+    mp4: 'video/mp4', mov: 'video/quicktime', avi: 'video/x-msvideo',
+    mkv: 'video/x-matroska', webm: 'video/webm', m4v: 'video/x-m4v',
+    heic: 'image/heic', heif: 'image/heif', jpg: 'image/jpeg',
+    jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+    webp: 'image/webp', avif: 'image/avif',
+  }
+  return map[ext] ?? null
 }
 
 function isMobileDevice(): boolean {
@@ -314,14 +325,28 @@ export default function UploadPage() {
       // Duplicate check failed — continue without flagging
     }
 
-    const guessedDate = extractRecordedDateFromFile(selectedFile)
-    if (guessedDate) setRecordedDate(guessedDate)
+    const mediaType = determineMediaType(selectedFile)
+    if (mediaType === 'other') {
+      setError('Only video and image files are supported.')
+      setMode('select')
+      return
+    }
 
-    if (isVideoFile(selectedFile)) {
-      // Fast metadata extraction (~instant, header-only)
-      const meta = await extractVideoMetadata(selectedFile)
-      if (meta.duration != null) setDuration(meta.duration)
-      if (meta.width && meta.height) setResolution(`${meta.width}x${meta.height}`)
+    if (mediaType === 'video') {
+      // Binary atom parse — single 512KB read for both date and duration
+      const fileMeta = await extractFileMetadata(selectedFile)
+      if (fileMeta.creationDate) setRecordedDate(fileMeta.creationDate)
+
+      // Video element for resolution; its duration is a fallback if atom parse missed
+      extractVideoMetadata(selectedFile)
+        .then(meta => {
+          if (meta.width && meta.height) setResolution(`${meta.width}x${meta.height}`)
+          if (fileMeta.duration != null) setDuration(fileMeta.duration)
+          else if (meta.duration != null) setDuration(meta.duration)
+        })
+        .catch(() => {
+          if (fileMeta.duration != null) setDuration(fileMeta.duration)
+        })
 
       // Background thumbnail generation for PREVIEW ONLY (not relied upon for upload)
       setGeneratingThumb(true)
@@ -331,7 +356,11 @@ export default function UploadPage() {
         })
         .catch(() => { /* Preview failed — no problem, upload pipeline handles it */ })
         .finally(() => setGeneratingThumb(false))
-    } else if (isImageFile(selectedFile)) {
+    } else {
+      // Image: keep filename/lastModified date logic (no video atoms to parse)
+      const guessedDate = extractRecordedDateFromFile(selectedFile)
+      if (guessedDate) setRecordedDate(guessedDate)
+
       const ext = selectedFile.name.split('.').pop()?.toLowerCase() ?? ''
       if (!['heic', 'heif'].includes(ext)) {
         setThumbnailPreview(URL.createObjectURL(selectedFile))
@@ -501,7 +530,7 @@ export default function UploadPage() {
             tag_ids: selectedTagIds,
             original_filename: file.name,
             file_size_bytes: file.size,
-            mime_type: file.type || null,
+            mime_type: file.type || guessMimeType(file.name) || null,
             resolution,
           }),
         }
@@ -568,12 +597,19 @@ export default function UploadPage() {
     setMode('bulk-queue')
     setError(null)
 
+    const unsupported = files.filter(f => determineMediaType(f) === 'other')
+    if (unsupported.length > 0) {
+      setError('Only video and image files are supported.')
+      setMode('select')
+      return
+    }
+
     // Build initial queue items
     const items: QueueItem[] = files.map(f => ({
       id: crypto.randomUUID(),
       file: f,
       title: f.name.replace(/\.[^/.]+$/, ''),
-      recordedDate: extractRecordedDateFromFile(f) ?? '',
+      recordedDate: '',  // filled below by extractFileMetadata
       thumbnailBlob: null,
       thumbnailPreview: null,
       duration: null,
@@ -608,22 +644,33 @@ export default function UploadPage() {
     const updatedItems = await Promise.all(items.map(async (item) => {
       let duration: number | null = null
       let resolution: string | null = null
+      let recordedDate = ''
 
       if (isVideoFile(item.file)) {
-        const meta = await extractVideoMetadata(item.file)
-        duration = meta.duration
-        resolution = meta.width && meta.height ? `${meta.width}x${meta.height}` : null
+        // Binary atom parse — single 512KB read for date + duration
+        const fileMeta = await extractFileMetadata(item.file)
+        if (fileMeta.creationDate) recordedDate = fileMeta.creationDate
+        duration = fileMeta.duration
+
+        // Video element for resolution; duration fallback if atom parse missed
+        const videoMeta = await extractVideoMetadata(item.file).catch(() => ({ duration: null, width: null, height: null }))
+        if (videoMeta.width && videoMeta.height) resolution = `${videoMeta.width}x${videoMeta.height}`
+        if (duration == null && videoMeta.duration != null) duration = videoMeta.duration
+      } else {
+        // Image: filename/lastModified date logic
+        recordedDate = extractRecordedDateFromFile(item.file) ?? ''
       }
 
       return {
         ...item,
         duration,
         resolution,
+        recordedDate,
         thumbnailPreview: (() => {
-        if (!isImageFile(item.file)) return null
-        const ext = item.file.name.split('.').pop()?.toLowerCase() ?? ''
-        return ['heic', 'heif'].includes(ext) ? null : URL.createObjectURL(item.file)
-      })(),
+          if (!isImageFile(item.file)) return null
+          const ext = item.file.name.split('.').pop()?.toLowerCase() ?? ''
+          return ['heic', 'heif'].includes(ext) ? null : URL.createObjectURL(item.file)
+        })(),
         status: dupeNames.has(item.file.name) ? 'duplicate' as const : 'ready' as const,
       }
     }))
@@ -791,7 +838,7 @@ export default function UploadPage() {
             tag_ids: bulkTagIds,
             original_filename: item.file.name,
             file_size_bytes: item.file.size,
-            mime_type: item.file.type || null,
+            mime_type: item.file.type || guessMimeType(item.file.name) || null,
             resolution: item.resolution,
           }),
         }
@@ -883,7 +930,7 @@ export default function UploadPage() {
             multiple
             className="hidden"
             onChange={handleFileInput}
-            accept="video/*,image/*,audio/*"
+            accept="video/*,image/*"
           />
         </label>
       </div>
