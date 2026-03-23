@@ -547,8 +547,6 @@ export default function VideoDetailPage() {
       // Upload new file with progress
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
-        xhr.open('PUT', media_upload_url)
-        xhr.setRequestHeader('Content-Type', selectedFile.type)
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             setReplaceProgress(Math.round((e.loaded / e.total) * 90))
@@ -559,6 +557,8 @@ export default function VideoDetailPage() {
           else reject(new Error(`Upload failed: ${xhr.status}`))
         }
         xhr.onerror = () => reject(new Error('Upload failed'))
+        xhr.open('PUT', media_upload_url)
+        xhr.setRequestHeader('Content-Type', selectedFile.type)
         xhr.send(selectedFile)
       })
 

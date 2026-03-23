@@ -170,7 +170,7 @@ interface QueueItem {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-type UploadMode = 'select' | 'preparing' | 'single-form' | 'single-uploading' | 'single-done' | 'bulk-queue' | 'bulk-uploading' | 'bulk-done'
+type UploadMode = 'select' | 'single-form' | 'single-uploading' | 'single-done' | 'bulk-queue' | 'bulk-uploading' | 'bulk-done'
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -178,7 +178,6 @@ export default function UploadPage() {
   const { can } = usePermissions()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const preparingTimerRef = useRef<number | null>(null)
 
   // ─── Shared state ───────────────────────────────────────────────────────
   const [mode, setMode] = useState<UploadMode>('select')
@@ -219,29 +218,6 @@ export default function UploadPage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [mode])
 
-  // Clean up preparing timer on unmount
-  useEffect(() => {
-    return () => {
-      if (preparingTimerRef.current) clearTimeout(preparingTimerRef.current)
-    }
-  }, [])
-
-  // iOS fix: reset stuck "preparing" mode when page regains visibility
-  // (e.g. after the iOS file picker closes without firing the change event)
-  useEffect(() => {
-    if (mode !== 'preparing') return
-
-    function handleVisibility() {
-      if (document.visibilityState !== 'visible') return
-      // Short delay: give the change event time to fire if files were selected
-      setTimeout(() => {
-        setMode(prev => prev === 'preparing' ? 'select' : prev)
-      }, 1500)
-    }
-
-    document.addEventListener('visibilitychange', handleVisibility)
-    return () => document.removeEventListener('visibilitychange', handleVisibility)
-  }, [mode])
 
   // Fetch tag details for single-file flow
   useEffect(() => {
@@ -265,14 +241,6 @@ export default function UploadPage() {
 
   // ─── File selection handlers ────────────────────────────────────────────
 
-  function handleFileInputClick() {
-    // Show "preparing" state after a short delay — avoids flash on desktop
-    // where files arrive nearly instantly
-    preparingTimerRef.current = window.setTimeout(() => {
-      setMode('preparing')
-    }, 300)
-  }
-
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     setIsDragging(false)
@@ -286,12 +254,6 @@ export default function UploadPage() {
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-    // Cancel the preparing-mode timer if files arrived quickly
-    if (preparingTimerRef.current) {
-      clearTimeout(preparingTimerRef.current)
-      preparingTimerRef.current = null
-    }
-
     const files = Array.from(e.target.files ?? [])
     if (files.length === 0) {
       // User cancelled the file picker
@@ -397,8 +359,8 @@ export default function UploadPage() {
 
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
-        xhr.open('PUT', media_upload_url)
-        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+        // Register upload listener BEFORE open() — some browsers
+        // suppress cross-origin progress events if attached after open()
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             const pct = Math.round((e.loaded / e.total) * 100)
@@ -410,6 +372,8 @@ export default function UploadPage() {
           else reject(new Error(`Upload failed with status ${xhr.status}`))
         }
         xhr.onerror = () => reject(new Error('Upload failed'))
+        xhr.open('PUT', media_upload_url)
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
         xhr.send(file)
       })
 
@@ -529,10 +493,6 @@ export default function UploadPage() {
     setBulkTagIds([])
     setBulkTags([])
     setError(null)
-    if (preparingTimerRef.current) {
-      clearTimeout(preparingTimerRef.current)
-      preparingTimerRef.current = null
-    }
     setMode('select')
   }
 
@@ -666,8 +626,6 @@ export default function UploadPage() {
 
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
-        xhr.open('PUT', media_upload_url)
-        xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             const pct = Math.round((e.loaded / e.total) * 100)
@@ -680,6 +638,8 @@ export default function UploadPage() {
           else reject(new Error(`Upload failed with status ${xhr.status}`))
         }
         xhr.onerror = () => reject(new Error('Upload failed'))
+        xhr.open('PUT', media_upload_url)
+        xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
         xhr.send(item.file)
       })
 
@@ -843,36 +803,9 @@ export default function UploadPage() {
             multiple
             className="hidden"
             onChange={handleFileInput}
-            onClick={handleFileInputClick}
             accept="video/*,image/*,audio/*"
           />
         </label>
-      </div>
-    )
-  }
-
-  // ─── Render: preparing files (iOS transcoding wait) ─────────────────────
-
-  if (mode === 'preparing') {
-    return (
-      <div className="flex flex-col items-center justify-center px-4 py-20">
-        <div className="mb-6 h-10 w-10 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
-        <p className="mb-2 text-base font-medium text-gray-900">Preparing files&hellip;</p>
-        <p className="max-w-xs text-center text-sm text-gray-500">
-          Your device is processing the selected videos. This may take a moment for large files.
-        </p>
-        <button
-          onClick={() => {
-            if (preparingTimerRef.current) {
-              clearTimeout(preparingTimerRef.current)
-              preparingTimerRef.current = null
-            }
-            setMode('select')
-          }}
-          className="mt-6 text-sm text-gray-500 underline hover:text-gray-700"
-        >
-          Cancel
-        </button>
       </div>
     )
   }
