@@ -36,3 +36,7 @@ supabase/functions/.env
 # Wrangler / Cloudflare
 .wrangler/
 wrangler.toml.local
+
+# Testing artifacts
+TESTING/backfill_report.csv
+media_rows.csv

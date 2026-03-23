@@ -16,7 +16,8 @@
       "WebFetch(domain:community.cloudflare.com)",
       "WebFetch(domain:supabase.com)",
       "Bash(grep -n \"100vw\\\\|100vh\\\\|position.*fixed\\\\|position.*absolute\" \"c:/Users/minds/Videos/DANCE/dance-library/WEBSITE/src/components\"/*.tsx)",
-      "Bash(xargs grep -l \"VideoPlayer\\\\|useWatchProgress\\\\|useContinueWatching\")"
+      "Bash(xargs grep -l \"VideoPlayer\\\\|useWatchProgress\\\\|useContinueWatching\")",
+      "Bash(git add .gitignore WEBSITE/src/pages/UploadPage.tsx WEBSITE/src/pages/VideoDetailPage.tsx TESTING/backfill_recorded_at.ipynb)"
     ]
   }
 }

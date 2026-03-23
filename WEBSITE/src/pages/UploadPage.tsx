@@ -32,14 +32,27 @@ function isImageFile(file: File): boolean {
  *   3. null                   — user fills in manually
  */
 function extractRecordedDateFromFile(file: File): string | null {
-  const nameMatch = file.name.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})/)
+  // Try Android-style filename: VID_20250315_143022.mp4
+  const nameMatch = file.name.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})/)
   if (nameMatch) {
-    const [, y, m, d] = nameMatch
+    const [, y, mo, d, h, mi, s] = nameMatch
+    const parsed = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`)
+    const now = Date.now()
+    const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
+    if (!isNaN(parsed.getTime()) && parsed.getTime() > tenYearsAgo && parsed.getTime() <= now) {
+      return `${y}-${mo}-${d}T${h}:${mi}`
+    }
+  }
+
+  // Try date-only from filename: IMG_20250315.jpg
+  const dateOnlyMatch = file.name.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})/)
+  if (dateOnlyMatch) {
+    const [, y, m, d] = dateOnlyMatch
     const parsed = new Date(`${y}-${m}-${d}`)
     const now = Date.now()
     const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
     if (!isNaN(parsed.getTime()) && parsed.getTime() > tenYearsAgo && parsed.getTime() <= now) {
-      return `${y}-${m}-${d}`
+      return `${y}-${m}-${d}T00:00`
     }
   }
 
@@ -48,7 +61,9 @@ function extractRecordedDateFromFile(file: File): string | null {
     const now = Date.now()
     const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
     if (!isNaN(modified.getTime()) && modified.getTime() > tenYearsAgo && modified.getTime() <= now) {
-      return modified.toISOString().split('T')[0]
+      // Preserve full datetime from lastModified, format for datetime-local input
+      const iso = modified.toISOString()
+      return iso.slice(0, 16) // "YYYY-MM-DDTHH:MM"
     }
   }
 
@@ -1043,9 +1058,9 @@ export default function UploadPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Recorded Date</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Recorded Date & Time</label>
             <input
-              type="date"
+              type="datetime-local"
               value={recordedDate}
               onChange={(e) => setRecordedDate(e.target.value)}
               className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"

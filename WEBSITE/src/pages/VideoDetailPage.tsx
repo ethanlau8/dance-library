@@ -241,7 +241,7 @@ export default function VideoDetailPage() {
     setEditTitle(media.title)
     setEditDescription(media.description ?? '')
     setEditRecordedDate(
-      media.recorded_at ? media.recorded_at.split('T')[0] : ''
+      media.recorded_at ? media.recorded_at.slice(0, 16) : ''
     )
     setEditTagIds(videoLevelTags.map((t) => t.id))
     setEditTags([...videoLevelTags])
@@ -838,10 +838,10 @@ export default function VideoDetailPage() {
                   {/* Editable recorded date */}
                   <div className="mt-2">
                     <label className="block text-xs font-medium text-gray-500 mb-1">
-                      Recorded Date
+                      Recorded Date & Time
                     </label>
                     <input
-                      type="date"
+                      type="datetime-local"
                       value={editRecordedDate}
                       onChange={(e) => setEditRecordedDate(e.target.value)}
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
