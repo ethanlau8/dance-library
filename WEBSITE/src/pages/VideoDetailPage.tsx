@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { useWatchProgress } from '../hooks/useWatchProgress'
+import { queryKeys } from '../lib/queryKeys'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
 import { generateThumbnail } from '../lib/ffmpeg'
 import VideoPlayer from '../components/VideoPlayer'
@@ -45,13 +47,88 @@ export default function VideoDetailPage() {
   const { user } = useAuth()
   const { can } = usePermissions()
 
-  // --- Core data state ---
-  const [media, setMedia] = useState<Media | null>(null)
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
-  const [videoLevelTags, setVideoLevelTags] = useState<Tag[]>([])
-  const [timestampTags, setTimestampTags] = useState<TimestampTag[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  // --- Core data queries ---
+  const mediaQuery = useQuery({
+    queryKey: queryKeys.media.detail(id ?? ''),
+    queryFn: async (): Promise<Media> => {
+      const { data, error } = await supabase.from('media').select('*').eq('id', id!).single()
+      if (error) throw error
+      return data
+    },
+    enabled: !!id && !!user,
+  })
+
+  const tagsQuery = useQuery({
+    queryKey: queryKeys.mediaTags.byMedia(id ?? ''),
+    queryFn: async (): Promise<{ videoLevelTags: Tag[]; timestampTags: TimestampTag[] }> => {
+      const { data, error } = await supabase
+        .from('media_tags')
+        .select('id, media_id, tag_id, start_time, end_time, tags(id, name, description, category_id, is_folder, tag_categories(name))')
+        .eq('media_id', id!)
+      if (error) throw error
+
+      const vTags: Tag[] = []
+      const tsTags: TimestampTag[] = []
+
+      for (const mt of (data ?? []) as any[]) {
+        const tag = Array.isArray(mt.tags) ? mt.tags[0] : mt.tags
+        if (!tag) continue
+
+        const catName = tag.tag_categories
+          ? Array.isArray(tag.tag_categories)
+            ? tag.tag_categories[0]?.name
+            : tag.tag_categories.name
+          : ''
+
+        if (mt.start_time !== null) {
+          tsTags.push({
+            id: mt.id,
+            media_id: mt.media_id,
+            tag_id: mt.tag_id,
+            start_time: mt.start_time,
+            end_time: mt.end_time,
+            tag_name: tag.name,
+            category_name: catName ?? '',
+          })
+        } else {
+          if (!vTags.some((t) => t.id === tag.id)) {
+            vTags.push(tag)
+          }
+        }
+      }
+
+      tsTags.sort((a, b) => a.start_time - b.start_time)
+      return { videoLevelTags: vTags, timestampTags: tsTags }
+    },
+    enabled: !!id && !!user,
+  })
+
+  const signedUrlQuery = useQuery({
+    queryKey: queryKeys.media.signedUrl(id ?? ''),
+    queryFn: async (): Promise<string | null> => {
+      const session = await supabase.auth.getSession()
+      const token = session.data.session?.access_token
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-media-url?media_id=${id}`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }
+      )
+      const data = await res.json()
+      return data.url ?? null
+    },
+    enabled: !!id && !!user,
+    staleTime: 50 * 60 * 1000, // 50 min (URL expires at 60)
+    gcTime: 0,
+    refetchOnMount: 'always',
+  })
+
+  const media = mediaQuery.data ?? null
+  const videoLevelTags = tagsQuery.data?.videoLevelTags ?? []
+  const timestampTags = tagsQuery.data?.timestampTags ?? []
+  const videoUrl = signedUrlQuery.data ?? null
+  const loading = mediaQuery.isLoading || tagsQuery.isLoading
+  const error = mediaQuery.error?.message ?? tagsQuery.error?.message ?? (signedUrlQuery.isError && media?.media_type !== 'image' ? 'Could not load video URL' : null)
   const [activeTimestampId, setActiveTimestampId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -109,87 +186,11 @@ export default function VideoDetailPage() {
     return () => mq.removeEventListener('change', handler)
   }, [])
 
-  // --- Fetch data ---
-  const fetchAll = useCallback(async () => {
-    if (!id || !user) return
-    setLoading(true)
-
-    try {
-      const mediaPromise = supabase
-        .from('media')
-        .select('*')
-        .eq('id', id)
-        .single()
-
-      const tagsPromise = supabase
-        .from('media_tags')
-        .select('id, media_id, tag_id, start_time, end_time, tags(id, name, description, category_id, is_folder, tag_categories(name))')
-        .eq('media_id', id)
-
-      const session = await supabase.auth.getSession()
-      const token = session.data.session?.access_token
-      const urlPromise = fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-media-url?media_id=${id}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      ).then((r) => r.json())
-
-      const [mediaRes, tagsRes, urlRes] = await Promise.all([mediaPromise, tagsPromise, urlPromise])
-
-      if (mediaRes.error) throw mediaRes.error
-      setMedia(mediaRes.data)
-
-      if (tagsRes.data) {
-        const vTags: Tag[] = []
-        const tsTags: TimestampTag[] = []
-
-        for (const mt of tagsRes.data as any[]) {
-          const tag = Array.isArray(mt.tags) ? mt.tags[0] : mt.tags
-          if (!tag) continue
-
-          const catName = tag.tag_categories
-            ? Array.isArray(tag.tag_categories)
-              ? tag.tag_categories[0]?.name
-              : tag.tag_categories.name
-            : ''
-
-          if (mt.start_time !== null) {
-            tsTags.push({
-              id: mt.id,
-              media_id: mt.media_id,
-              tag_id: mt.tag_id,
-              start_time: mt.start_time,
-              end_time: mt.end_time,
-              tag_name: tag.name,
-              category_name: catName ?? '',
-            })
-          } else {
-            if (!vTags.some((t) => t.id === tag.id)) {
-              vTags.push(tag)
-            }
-          }
-        }
-
-        tsTags.sort((a, b) => a.start_time - b.start_time)
-        setVideoLevelTags(vTags)
-        setTimestampTags(tsTags)
-      }
-
-      if (urlRes.url) {
-        setVideoUrl(urlRes.url)
-      } else if (mediaRes.data?.media_type !== 'image') {
-        setError('Could not load video URL')
-      }
-    } catch (err) {
-      console.error('Error loading video detail:', err)
-      setError('Failed to load video')
-    } finally {
-      setLoading(false)
-    }
-  }, [id, user])
-
-  useEffect(() => {
-    fetchAll()
-  }, [fetchAll])
+  // Refetch all data after mutations
+  const refetchAll = useCallback(() => {
+    qc.invalidateQueries({ queryKey: queryKeys.media.detail(id ?? '') })
+    qc.invalidateQueries({ queryKey: queryKeys.mediaTags.byMedia(id ?? '') })
+  }, [id, qc])
 
   // Save progress every 5 seconds
   useEffect(() => {
@@ -362,9 +363,11 @@ export default function VideoDetailPage() {
         throw new Error(data.error || `Save failed with status ${res.status}`)
       }
 
-      // Re-fetch and exit edit mode
+      // Invalidate caches and exit edit mode
       setIsEditMode(false)
-      await fetchAll()
+      refetchAll()
+      qc.invalidateQueries({ queryKey: queryKeys.media.all })
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     } catch (err) {
       console.error('Save error:', err)
       setEditError(
@@ -601,29 +604,9 @@ export default function VideoDetailPage() {
 
       setReplaceProgress(100)
 
-      // Re-fetch video URL and media data
-      const newUrlRes = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-media-url?media_id=${id}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      ).then((r) => r.json())
-
-      if (newUrlRes.url) {
-        setVideoUrl(newUrlRes.url)
-      }
-
-      // Re-fetch media record for updated paths/duration
-      const { data: updatedMedia } = await supabase
-        .from('media')
-        .select('*')
-        .eq('id', id)
-        .single()
-      if (updatedMedia) {
-        setMedia(updatedMedia)
-        // Update edit fields with new data
-        if (newDuration) {
-          // duration already updated on server
-        }
-      }
+      // Invalidate caches to refetch video URL and media data
+      qc.invalidateQueries({ queryKey: queryKeys.media.detail(id) })
+      qc.invalidateQueries({ queryKey: queryKeys.media.signedUrl(id) })
     } catch (err) {
       console.error('Replace error:', err)
       setEditError(
@@ -662,6 +645,9 @@ export default function VideoDetailPage() {
         throw new Error(data.error || `Delete failed with status ${res.status}`)
       }
 
+      qc.invalidateQueries({ queryKey: queryKeys.media.all })
+      qc.invalidateQueries({ queryKey: queryKeys.folders.all })
+      qc.invalidateQueries({ queryKey: queryKeys.continueWatching(user?.id ?? '') })
       navigate('/')
     } catch (err) {
       console.error('Delete error:', err)
@@ -912,7 +898,7 @@ export default function VideoDetailPage() {
               {videoLevelTags.map((tag) => (
                 <button
                   key={tag.id}
-                  onClick={() => navigate(`/?tag=${tag.id}`)}
+                  onClick={() => navigate(`/?tags=${tag.id}`)}
                   className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
                 >
                   {tag.name}

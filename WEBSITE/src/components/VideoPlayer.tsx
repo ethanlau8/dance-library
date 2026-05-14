@@ -328,8 +328,8 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
             aria-label="Toggle play/pause"
           />
 
-          {/* Bottom controls bar */}
-          <div className="bg-gradient-to-t from-black/60 to-transparent px-3 pb-2 pt-8">
+          {/* Bottom controls bar — relative so it sits above the -z-10 tap area */}
+          <div className="relative bg-gradient-to-t from-black/60 to-transparent px-3 pb-2 pt-8">
             {/* Seekbar */}
             <div
               ref={seekbarRef}

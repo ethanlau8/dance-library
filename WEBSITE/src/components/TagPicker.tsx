@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { queryKeys } from '../lib/queryKeys'
 import type { Tag, TagCategory } from '../types'
 
 interface TagPickerProps {
@@ -23,6 +25,7 @@ export default function TagPicker({
   multiSelect = true,
 }: TagPickerProps) {
   const { user } = useAuth()
+  const qc = useQueryClient()
   const [tags, setTags] = useState<TagWithCategory[]>([])
   const [categories, setCategories] = useState<TagCategory[]>([])
   const [search, setSearch] = useState('')
@@ -171,6 +174,7 @@ export default function TagPicker({
       onChange([...selectedTagIds, newTag.id])
       setShowCreate(false)
       setSearch('')
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     } catch (err) {
       console.error('Failed to create tag:', err)
     } finally {

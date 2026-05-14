@@ -118,7 +118,7 @@ Deno.serve(async (req: Request) => {
     JSON.stringify({ url: signedUrl, expires_in: expiresIn }),
     {
       status: 200,
-      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json", "Cache-Control": "no-store" },
     }
   );
 });

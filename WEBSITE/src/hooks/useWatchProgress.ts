@@ -1,18 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { queryKeys } from '../lib/queryKeys'
 
 export function useWatchProgress(mediaId: string, duration: number | null) {
   const { user } = useAuth()
-  const [initialPosition, setInitialPosition] = useState<number | null>(null)
 
-  useEffect(() => {
-    if (!user) {
-      setInitialPosition(0)
-      return
-    }
-
-    async function fetch() {
+  const query = useQuery({
+    queryKey: queryKeys.watchProgress(mediaId),
+    queryFn: async (): Promise<number> => {
       const { data, error } = await supabase
         .from('watch_progress')
         .select('position')
@@ -22,14 +19,13 @@ export function useWatchProgress(mediaId: string, duration: number | null) {
 
       if (error) {
         console.error('Error fetching watch progress:', error)
-        setInitialPosition(0)
-        return
+        return 0
       }
-      setInitialPosition(data?.position ?? 0)
-    }
-
-    fetch()
-  }, [user, mediaId])
+      return data?.position ?? 0
+    },
+    enabled: !!user && !!mediaId,
+    staleTime: Infinity,
+  })
 
   const savePosition = useCallback(
     (position: number) => {
@@ -55,5 +51,5 @@ export function useWatchProgress(mediaId: string, duration: number | null) {
     [user, mediaId, duration]
   )
 
-  return { initialPosition, savePosition }
+  return { initialPosition: query.data ?? null, savePosition }
 }

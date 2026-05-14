@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
+import { queryKeys } from '../lib/queryKeys'
 import type { Tag, TagCategory } from '../types'
 
 interface TagWithCategory extends Tag {
@@ -11,6 +13,7 @@ interface TagWithCategory extends Tag {
 export default function TagsPage() {
   const { user } = useAuth()
   const { can } = usePermissions()
+  const qc = useQueryClient()
   const [tags, setTags] = useState<TagWithCategory[]>([])
   const [categories, setCategories] = useState<TagCategory[]>([])
   const [search, setSearch] = useState('')
@@ -108,6 +111,9 @@ export default function TagsPage() {
       // Revert on failure
       setTags((prev) => prev.map((t) => (t.id === tag.id ? { ...t, is_folder: !newValue } : t)))
       console.error('Failed to toggle folder:', error)
+    } else {
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
+      qc.invalidateQueries({ queryKey: queryKeys.folders.all })
     }
   }
 
@@ -157,6 +163,7 @@ export default function TagsPage() {
         )
       )
       setEditingId(null)
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     }
     setSaving(false)
   }
@@ -215,6 +222,7 @@ export default function TagsPage() {
 
       setTags((prev) => [...prev, newTag].sort((a, b) => a.name.localeCompare(b.name)))
       setShowCreate(false)
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     } catch (err: any) {
       setCreateError(err.message ?? 'Failed to create tag')
     } finally {
@@ -254,6 +262,8 @@ export default function TagsPage() {
     setTags(remainingTags)
     setDeleteConfirm(null)
     setDeleting(false)
+    qc.invalidateQueries({ queryKey: queryKeys.tags.all })
+    qc.invalidateQueries({ queryKey: queryKeys.folders.all })
 
     // Auto-delete empty category
     const categoryStillHasTags = remainingTags.some((t) => t.category_id === categoryId)
@@ -301,6 +311,8 @@ export default function TagsPage() {
     setCategories((prev) => prev.filter((c) => c.id !== cat.id))
     setDeleteConfirm(null)
     setDeleting(false)
+    qc.invalidateQueries({ queryKey: queryKeys.tags.all })
+    qc.invalidateQueries({ queryKey: queryKeys.folders.all })
   }
 
   // --- Edit category ---
@@ -349,6 +361,7 @@ export default function TagsPage() {
         )
       )
       setEditingCategoryId(null)
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     }
     setSavingCategory(false)
   }

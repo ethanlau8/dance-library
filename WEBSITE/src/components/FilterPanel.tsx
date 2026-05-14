@@ -1,14 +1,18 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { queryKeys } from '../lib/queryKeys'
+import type { TagMode } from '../hooks/useMedia'
 import type { Tag } from '../types'
 
 interface FilterPanelProps {
   isOpen: boolean
   onClose: () => void
   activeTags: Tag[]
+  activeTagMode: TagMode
   activeDateRange: { from: string | null; to: string | null }
   activeMediaType: string | null
-  onApply: (tags: Tag[], dateRange: { from: string | null; to: string | null }, mediaType: string | null) => void
+  onApply: (tags: Tag[], dateRange: { from: string | null; to: string | null }, mediaType: string | null, tagMode: TagMode) => void
 }
 
 interface TagWithCategory extends Tag {
@@ -17,69 +21,50 @@ interface TagWithCategory extends Tag {
 
 const TAGS_VISIBLE_PER_CATEGORY = 5
 
-// Module-level cache — persists for the page session, avoids re-fetching on every panel open
-let cachedTags: TagWithCategory[] | null = null
-
 export default function FilterPanel({
   isOpen,
   onClose,
   activeTags,
+  activeTagMode,
   activeDateRange,
   activeMediaType,
   onApply,
 }: FilterPanelProps) {
-  const [allTags, setAllTags] = useState<TagWithCategory[]>([])
-  const [loading, setLoading] = useState(true)
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
+  const [selectedTagMode, setSelectedTagMode] = useState<TagMode>('and')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [dateFrom, setDateFrom] = useState<string>('')
   const [dateTo, setDateTo] = useState<string>('')
   const [selectedMediaType, setSelectedMediaType] = useState<string | null>(null)
 
-  // Fetch tags on first open
-  useEffect(() => {
-    if (!isOpen) return
-    fetchTags()
-  }, [isOpen])
+  const { data: allTags = [], isLoading: loading } = useQuery({
+    queryKey: queryKeys.tags.withCategories(),
+    queryFn: async (): Promise<TagWithCategory[]> => {
+      const { data, error } = await supabase
+        .from('tags')
+        .select('*, tag_categories(id, name)')
+        .order('name')
+
+      if (error) throw error
+
+      return (data ?? []).map((t: any) => ({
+        ...t,
+        category_name: t.tag_categories?.name ?? 'Uncategorized',
+      }))
+    },
+    staleTime: 2 * 60 * 1000,
+  })
 
   // Pre-populate from active filters when opened
   useEffect(() => {
     if (!isOpen) return
     setSelectedTagIds(new Set(activeTags.map((t) => t.id)))
+    setSelectedTagMode(activeTagMode)
     setDateFrom(activeDateRange.from ?? '')
     setDateTo(activeDateRange.to ?? '')
     setSelectedMediaType(activeMediaType)
     setExpandedCategories(new Set())
-  }, [isOpen, activeTags, activeDateRange, activeMediaType])
-
-  async function fetchTags() {
-    if (cachedTags) {
-      setAllTags(cachedTags)
-      setLoading(false)
-      return
-    }
-
-    setLoading(true)
-    const { data, error } = await supabase
-      .from('tags')
-      .select('*, tag_categories(id, name)')
-      .order('name')
-
-    if (error) {
-      console.error('Error fetching tags for filter:', error)
-      setLoading(false)
-      return
-    }
-
-    const mapped: TagWithCategory[] = (data ?? []).map((t: any) => ({
-      ...t,
-      category_name: t.tag_categories?.name ?? 'Uncategorized',
-    }))
-
-    cachedTags = mapped
-    setAllTags(mapped)
-    setLoading(false)
-  }
+  }, [isOpen, activeTags, activeTagMode, activeDateRange, activeMediaType])
 
   // Group tags by category
   const groupedTags = useMemo(() => {
@@ -118,6 +103,7 @@ export default function FilterPanel({
 
   function handleClear() {
     setSelectedTagIds(new Set())
+    setSelectedTagMode('and')
     setDateFrom('')
     setDateTo('')
     setSelectedMediaType(null)
@@ -131,7 +117,8 @@ export default function FilterPanel({
         from: dateFrom || null,
         to: dateTo || null,
       },
-      selectedMediaType
+      selectedMediaType,
+      selectedTagMode
     )
     onClose()
   }
@@ -174,6 +161,35 @@ export default function FilterPanel({
             </div>
           ) : (
             <>
+              {/* Tag match mode */}
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Tag matching
+                </p>
+                <div className="flex rounded-lg border border-gray-200">
+                  <button
+                    onClick={() => setSelectedTagMode('and')}
+                    className={`flex-1 rounded-l-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                      selectedTagMode === 'and'
+                        ? 'bg-gray-900 text-white'
+                        : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    All (AND)
+                  </button>
+                  <button
+                    onClick={() => setSelectedTagMode('or')}
+                    className={`flex-1 rounded-r-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                      selectedTagMode === 'or'
+                        ? 'bg-gray-900 text-white'
+                        : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    Any (OR)
+                  </button>
+                </div>
+              </div>
+
               {/* Tag categories */}
               {groupedTags.map(([category, tags]) => {
                 const isExpanded = expandedCategories.has(category)

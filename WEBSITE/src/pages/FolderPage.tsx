@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useMedia, type SortBy } from '../hooks/useMedia'
+import { useFilterParams } from '../hooks/useFilterParams'
+import { queryKeys } from '../lib/queryKeys'
 import MediaGrid from '../components/MediaGrid'
 import ActiveFilterChips from '../components/ActiveFilterChips'
 import SearchOverlay from '../components/SearchOverlay'
 import FilterPanel from '../components/FilterPanel'
-import type { Tag } from '../types'
 
 const VIEW_MODE_KEY = 'dance-library:view-mode'
 
@@ -14,20 +16,33 @@ export default function FolderPage() {
   const { tagId } = useParams<{ tagId: string }>()
   const navigate = useNavigate()
 
-  const [folderName, setFolderName] = useState('')
-  const [folderLoading, setFolderLoading] = useState(true)
+  const {
+    sortBy, setSortBy,
+    tagIds, tagMode, tagObjects,
+    addTag, removeTag,
+    fromDate, toDate, setDateRange,
+    mediaType, setMediaType,
+    applyFilters,
+  } = useFilterParams()
+
+  const { data: folderName = '', isLoading: folderLoading } = useQuery({
+    queryKey: [...queryKeys.folders.all, 'name', tagId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tags')
+        .select('name')
+        .eq('id', tagId!)
+        .single()
+      if (error) throw error
+      return data.name
+    },
+    enabled: !!tagId,
+  })
 
   const [viewMode, setViewMode] = useState<'grid' | 'feed'>(() => {
     const saved = localStorage.getItem(VIEW_MODE_KEY)
     return saved === 'feed' ? 'feed' : 'grid'
   })
-  const [sortBy, setSortBy] = useState<SortBy>('upload_date')
-  const [activeTagFilters, setActiveTagFilters] = useState<Tag[]>([])
-  const [activeDateRange, setActiveDateRange] = useState<{ from: string | null; to: string | null }>({
-    from: null,
-    to: null,
-  })
-  const [activeMediaType, setActiveMediaType] = useState<string | null>(null)
 
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [isFilterOpen, setIsFilterOpen] = useState(false)
@@ -35,58 +50,17 @@ export default function FolderPage() {
 
   const { media, totalCount, loading, hasMore, loadMore, mediaTags } = useMedia({
     sortBy,
-    tagFilters: activeTagFilters,
-    fromDate: activeDateRange.from,
-    toDate: activeDateRange.to,
+    tagIds,
+    tagMode,
+    fromDate,
+    toDate,
     folderTagId: tagId ?? null,
-    mediaType: activeMediaType,
+    mediaType,
   })
 
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode)
   }, [viewMode])
-
-  // Fetch folder info
-  useEffect(() => {
-    if (!tagId) return
-    async function fetchFolder() {
-      setFolderLoading(true)
-      const { data, error } = await supabase
-        .from('tags')
-        .select('name')
-        .eq('id', tagId!)
-        .single()
-
-      if (error) {
-        console.error('Error fetching folder:', error)
-      } else if (data) {
-        setFolderName(data.name)
-      }
-      setFolderLoading(false)
-    }
-    fetchFolder()
-  }, [tagId])
-
-  function handleRemoveTag(tagId: string) {
-    setActiveTagFilters((prev) => prev.filter((t) => t.id !== tagId))
-  }
-
-  function handleClearDates() {
-    setActiveDateRange({ from: null, to: null })
-  }
-
-  function handleApplyTagFilter(tag: Tag) {
-    setActiveTagFilters((prev) => {
-      if (prev.some((t) => t.id === tag.id)) return prev
-      return [...prev, tag]
-    })
-  }
-
-  function handleApplyFilters(tags: Tag[], dateRange: { from: string | null; to: string | null }, mediaType: string | null) {
-    setActiveTagFilters(tags)
-    setActiveDateRange(dateRange)
-    setActiveMediaType(mediaType)
-  }
 
   if (folderLoading) {
     return (
@@ -154,12 +128,12 @@ export default function FolderPage() {
             <button
               onClick={() => setIsFilterOpen(true)}
               className={`rounded border px-2 py-1 text-xs ${
-                activeTagFilters.length > 0 || activeDateRange.from || activeDateRange.to || activeMediaType
+                tagIds.length > 0 || fromDate || toDate || mediaType
                   ? 'border-blue-300 bg-blue-50 text-blue-700'
                   : 'border-gray-300 text-gray-700'
               }`}
             >
-              Filters{activeTagFilters.length > 0 ? ` (${activeTagFilters.length})` : ''}
+              Filters{tagIds.length > 0 ? ` (${tagIds.length})` : ''}
             </button>
           </div>
         </div>
@@ -167,14 +141,14 @@ export default function FolderPage() {
         {/* Active filter chips */}
         <ActiveFilterChips
           activeFilters={{
-            tags: activeTagFilters,
-            fromDate: activeDateRange.from,
-            toDate: activeDateRange.to,
-            mediaType: activeMediaType,
+            tags: tagObjects,
+            fromDate,
+            toDate,
+            mediaType,
           }}
-          onRemoveTag={handleRemoveTag}
-          onClearDates={handleClearDates}
-          onClearMediaType={() => setActiveMediaType(null)}
+          onRemoveTag={removeTag}
+          onClearDates={() => setDateRange(null, null)}
+          onClearMediaType={() => setMediaType(null)}
         />
       </div>
 
@@ -202,7 +176,7 @@ export default function FolderPage() {
       <SearchOverlay
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onApplyTagFilter={handleApplyTagFilter}
+        onApplyTagFilter={(tag) => addTag(tag.id)}
         folderTagId={tagId}
         folderName={folderName}
       />
@@ -211,10 +185,11 @@ export default function FolderPage() {
       <FilterPanel
         isOpen={isFilterOpen}
         onClose={() => setIsFilterOpen(false)}
-        activeTags={activeTagFilters}
-        activeDateRange={activeDateRange}
-        activeMediaType={activeMediaType}
-        onApply={handleApplyFilters}
+        activeTags={tagObjects}
+        activeTagMode={tagMode}
+        activeDateRange={{ from: fromDate, to: toDate }}
+        activeMediaType={mediaType}
+        onApply={applyFilters}
       />
     </div>
   )

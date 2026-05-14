@@ -1,4 +1,6 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { HashRouter, Routes, Route } from 'react-router-dom'
+import { queryClient } from './lib/queryClient'
 import { AuthProvider } from './contexts/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
@@ -12,6 +14,7 @@ import TagsPage from './pages/TagsPage'
 
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <HashRouter>
         <Routes>
@@ -67,5 +70,6 @@ export default function App() {
         </Routes>
       </HashRouter>
     </AuthProvider>
+    </QueryClientProvider>
   )
 }
