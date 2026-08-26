@@ -15,3 +15,6 @@ verify_jwt = false
 
 [functions.update-media]
 verify_jwt = false
+
+[functions.extract-recorded-at]
+verify_jwt = false

@@ -31,6 +31,13 @@ export interface Media {
   thumbnail_path: string | null
   duration: number | null
   recorded_at: string | null
+  /** How recorded_at was determined. Null means not yet classified; 'unknown'
+   *  means classified and the file carries no recoverable date. */
+  recorded_at_source: string | null
+  /** True UTC offset at the recording, in minutes east of UTC. Only the Apple
+   *  atom states one; null everywhere else means the venue default applies. */
+  recorded_at_offset_minutes: number | null
+  recorded_at_precision: string | null
   uploaded_by: string
   created_at: string
   updated_at: string

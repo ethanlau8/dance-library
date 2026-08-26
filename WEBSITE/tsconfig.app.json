@@ -22,7 +22,15 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* Shared with the Supabase edge functions. The MP4 date parser has one
+       implementation used by both the browser and extract-recorded-at; it lives
+       under supabase/functions/_shared because the Deno bundler is the fussier
+       consumer. See vite.config.ts for the matching alias and fs.allow entry. */
+    "paths": {
+      "@shared/*": ["../SUPABASE/supabase/functions/_shared/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "../SUPABASE/supabase/functions/_shared"]
 }

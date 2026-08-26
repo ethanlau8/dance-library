@@ -65,6 +65,9 @@ Deno.serve(async (req: Request) => {
     thumbnail_path?: string;
     duration?: number;
     recorded_at?: string | null;
+    recorded_at_source?: string | null;
+    recorded_at_offset_minutes?: number | null;
+    recorded_at_precision?: string | null;
     tag_ids?: string[];
     original_filename?: string;
     file_size_bytes?: number;
@@ -80,7 +83,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const { title, description, media_type, storage_path, thumbnail_path, duration, recorded_at, tag_ids, original_filename, file_size_bytes, mime_type, resolution } = body;
+  const { title, description, media_type, storage_path, thumbnail_path, duration, recorded_at, recorded_at_source, recorded_at_offset_minutes, recorded_at_precision, tag_ids, original_filename, file_size_bytes, mime_type, resolution } = body;
 
   if (!title || !media_type) {
     return new Response(JSON.stringify({ error: "title and media_type are required" }), {
@@ -100,6 +103,12 @@ Deno.serve(async (req: Request) => {
       thumbnail_path: thumbnail_path ?? null,
       duration: duration ?? null,
       recorded_at: recorded_at ?? null,
+      // Provenance travels with the date from the client parser, so a row is
+      // attributed at creation rather than waiting on a later pass. The CHECK
+      // constraints reject anything outside the known vocabulary.
+      recorded_at_source: recorded_at_source ?? null,
+      recorded_at_offset_minutes: recorded_at_offset_minutes ?? null,
+      recorded_at_precision: recorded_at_precision ?? null,
       original_filename: original_filename ?? null,
       file_size_bytes: file_size_bytes ?? null,
       mime_type: mime_type ?? null,

@@ -9,6 +9,8 @@ import { generateThumbnail, extractVideoMetadata, extractFileMetadata } from '..
 import { runWithConcurrency } from '../lib/concurrency'
 import { formatFileSize, formatDuration } from '../lib/format'
 import { toVenueDatetimeLocal, fromVenueDatetimeLocal } from '../lib/venue'
+import { buildRecordedAtFields } from '../lib/recordedAt'
+import type { ExtractedDate } from '@shared/mp4Date.ts'
 import TagPicker from '../components/TagPicker'
 import type { Tag } from '../types'
 
@@ -77,6 +79,117 @@ function extractRecordedDateFromFile(file: File): string | null {
   return null
 }
 
+/**
+ * Ask the server to read the recording date from the uploaded object.
+ *
+ * The browser only ever sees a best-effort answer: for the 318 of 404 library
+ * files that place `moov` at the end, reading it from a phone would mean pulling
+ * most of the file back over the network. The server has the object already and
+ * does it in a few range requests, so its answer is authoritative — except for a
+ * date the user typed, which create-media has already recorded as 'manual' and
+ * which this call deliberately leaves alone.
+ *
+ * Deliberately non-fatal. The upload has succeeded by this point and the row
+ * already carries the client's date; a failure here costs provenance, not data.
+ */
+async function requestServerExtraction(mediaId: string, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/extract-recorded-at`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media_id: mediaId }),
+      }
+    )
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * PUT a file to R2, reporting *why* it failed rather than just that it did.
+ *
+ * The previous handler collapsed every outcome into "Upload failed", which on a
+ * phone is the only diagnostic channel there is — no console, no network tab.
+ * A backgrounded tab, a dropped connection, an expired URL and a genuine server
+ * error are very different problems and were indistinguishable.
+ *
+ * The background case matters most: iOS suspends inactive tabs, which kills an
+ * in-flight XHR. On a large file over cellular that is minutes of exposure, and
+ * it looks identical to a crash.
+ */
+function putToR2(opts: {
+  url: string
+  file: File
+  onProgress: (pct: number) => void
+}): Promise<void> {
+  const { url, file, onProgress } = opts
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    let sentBytes = 0
+    let wentToBackground = false
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') wentToBackground = true
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    const done = () => document.removeEventListener('visibilitychange', onVisibility)
+
+    const pct = () => (file.size ? Math.round((sentBytes / file.size) * 100) : 0)
+    const sizeMb = (file.size / 1e6).toFixed(0)
+
+    // Attach before open(): some browsers suppress cross-origin progress
+    // events on listeners added afterwards.
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return
+      sentBytes = e.loaded
+      onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () => {
+      done()
+      if (xhr.status >= 200 && xhr.status < 300) return resolve()
+      if (xhr.status === 403) {
+        return reject(new Error(
+          `Storage rejected the upload (403). The upload link is valid for 15 minutes; ` +
+          `a ${sizeMb}MB file on a slow connection can exceed that.`
+        ))
+      }
+      reject(new Error(`Storage returned ${xhr.status} after ${pct()}% of ${sizeMb}MB.`))
+    }
+    xhr.onerror = () => {
+      done()
+      if (wentToBackground) {
+        return reject(new Error(
+          `Upload interrupted at ${pct()}% — the app was moved to the background. ` +
+          `Keep this screen open while a large file uploads.`
+        ))
+      }
+      if (sentBytes === 0) {
+        return reject(new Error('Could not reach storage — check your connection and try again.'))
+      }
+      reject(new Error(`Connection lost at ${pct()}% of ${sizeMb}MB.`))
+    }
+    xhr.onabort = () => {
+      done()
+      reject(new Error(
+        wentToBackground
+          ? `Upload cancelled at ${pct()}% — the app was backgrounded.`
+          : `Upload cancelled at ${pct()}%.`
+      ))
+    }
+    xhr.ontimeout = () => {
+      done()
+      reject(new Error(`Upload timed out at ${pct()}% of ${sizeMb}MB.`))
+    }
+
+    xhr.open('PUT', url)
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.send(file)
+  })
+}
+
 function determineMediaType(file: File): 'video' | 'image' | 'other' {
   if (isVideoFile(file)) return 'video'
   if (isImageFile(file)) return 'image'
@@ -102,7 +215,7 @@ function isMobileDevice(): boolean {
 
 // ─── Upload pipeline step tracking ─────────────────────────────────────────
 
-type UploadStepName = 'presign' | 'upload' | 'thumbnail-gen' | 'thumbnail-up' | 'db-save'
+type UploadStepName = 'presign' | 'upload' | 'thumbnail-gen' | 'thumbnail-up' | 'db-save' | 'extract'
 type StepStatus = 'pending' | 'active' | 'done' | 'error' | 'skipped'
 
 interface UploadStep {
@@ -119,6 +232,7 @@ const UPLOAD_STEP_DEFS: { name: UploadStepName; label: string }[] = [
   { name: 'thumbnail-gen', label: 'Generating thumbnail' },
   { name: 'thumbnail-up', label: 'Uploading thumbnail' },
   { name: 'db-save', label: 'Saving to library' },
+  { name: 'extract', label: 'Reading video metadata' },
 ]
 
 function createInitialSteps(): UploadStep[] {
@@ -196,6 +310,8 @@ interface QueueItem {
   file: File
   title: string
   recordedDate: string
+  /** What the container parser found, so provenance survives to create-media. */
+  recordedDateMeta: ExtractedDate | null
   thumbnailBlob: Blob | null
   thumbnailPreview: string | null
   duration: number | null
@@ -242,6 +358,7 @@ export default function UploadPage() {
   // extraction cannot overwrite what they typed. A ref, not state: it is read
   // inside an async callback that must see the latest value.
   const recordedDateTouchedRef = useRef(false)
+  const [recordedDateMeta, setRecordedDateMeta] = useState<ExtractedDate | null>(null)
   const qc = useQueryClient()
   const [thumbnailWarning, setThumbnailWarning] = useState<string | null>(null)
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
@@ -347,25 +464,30 @@ export default function UploadPage() {
     }
 
     if (mediaType === 'video') {
-      // Binary atom parse — single 512KB read for both date and duration
-      const fileMeta = await extractFileMetadata(selectedFile)
-      // creationDate is an instant; the input holds a venue wall clock.
-      // Extraction is async and the form is already interactive, so never
-      // overwrite a date the user has typed in the meantime.
-      if (fileMeta.creationDate && !recordedDateTouchedRef.current) {
-        setRecordedDate(toVenueDatetimeLocal(fileMeta.creationDate))
-      }
+      // Atom-table walk for date and duration. Deliberately NOT awaited: the
+      // read is bounded but can still take seconds on a file the OS has not
+      // materialised, and blocking here left the form half-built and the upload
+      // unreachable. Everything below is independent of it.
+      extractFileMetadata(selectedFile)
+        .then(fileMeta => {
+          setRecordedDateMeta(fileMeta.date)
+          // Never overwrite a date the user has typed while this was in flight.
+          if (fileMeta.date.instant && !recordedDateTouchedRef.current) {
+            setRecordedDate(toVenueDatetimeLocal(fileMeta.date.instant))
+          }
+          // The container's duration is authoritative, so it wins outright.
+          if (fileMeta.duration != null) setDuration(fileMeta.duration)
+        })
+        .catch(() => { /* server-side extraction will supply the date */ })
 
-      // Video element for resolution; its duration is a fallback if atom parse missed
+      // Video element for resolution, and duration only if the atom parse missed
+      // it — the two now race, so this must not clobber a value already set.
       extractVideoMetadata(selectedFile)
         .then(meta => {
           if (meta.width && meta.height) setResolution(`${meta.width}x${meta.height}`)
-          if (fileMeta.duration != null) setDuration(fileMeta.duration)
-          else if (meta.duration != null) setDuration(meta.duration)
+          if (meta.duration != null) setDuration(prev => prev ?? meta.duration)
         })
-        .catch(() => {
-          if (fileMeta.duration != null) setDuration(fileMeta.duration)
-        })
+        .catch(() => { /* resolution is optional */ })
 
       // Background thumbnail generation for PREVIEW ONLY (not relied upon for upload)
       setGeneratingThumb(true)
@@ -433,24 +555,10 @@ export default function UploadPage() {
       } else {
         updateSingleStep('upload', { status: 'active', progress: 0 })
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          // Register upload listener BEFORE open() — some browsers
-          // suppress cross-origin progress events if attached after open()
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 100)
-              updateSingleStep('upload', { progress: pct })
-            }
-          }
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve()
-            else reject(new Error(`Upload failed with status ${xhr.status}`))
-          }
-          xhr.onerror = () => reject(new Error('Upload failed'))
-          xhr.open('PUT', media_upload_url)
-          xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-          xhr.send(file)
+        await putToR2({
+          url: media_upload_url,
+          file,
+          onProgress: (pct) => updateSingleStep('upload', { progress: pct }),
         })
 
         updateSingleStep('upload', { status: 'done', progress: 100 })
@@ -545,7 +653,7 @@ export default function UploadPage() {
             storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: duration != null ? Math.round(duration) : null,
-            recorded_at: fromVenueDatetimeLocal(recordedDate),
+            ...buildRecordedAtFields(recordedDate, recordedDateMeta, recordedDateTouchedRef.current),
             tag_ids: selectedTagIds,
             original_filename: file.name,
             file_size_bytes: file.size,
@@ -559,6 +667,14 @@ export default function UploadPage() {
 
       const { media_id } = await createRes.json()
       updateSingleStep('db-save', { status: 'done' })
+
+      if (mediaType === 'video') {
+        updateSingleStep('extract', { status: 'active' })
+        const ok = await requestServerExtraction(media_id, token)
+        updateSingleStep('extract', { status: ok ? 'done' : 'skipped' })
+      } else {
+        updateSingleStep('extract', { status: 'skipped' })
+      }
 
       setCompletedMediaId(media_id)
       // Without this the new video is absent from any already-mounted list until
@@ -634,6 +750,7 @@ export default function UploadPage() {
       file: f,
       title: f.name.replace(/\.[^/.]+$/, ''),
       recordedDate: '',  // filled below by extractFileMetadata
+      recordedDateMeta: null,
       thumbnailBlob: null,
       thumbnailPreview: null,
       duration: null,
@@ -669,11 +786,13 @@ export default function UploadPage() {
       let duration: number | null = null
       let resolution: string | null = null
       let recordedDate = ''
+      let recordedDateMeta: ExtractedDate | null = null
 
       if (isVideoFile(item.file)) {
-        // Binary atom parse — single 512KB read for date + duration
+        // Atom-table walk to moov — a few cheap File slices, no network
         const fileMeta = await extractFileMetadata(item.file)
-        if (fileMeta.creationDate) recordedDate = toVenueDatetimeLocal(fileMeta.creationDate)
+        if (fileMeta.date.instant) recordedDate = toVenueDatetimeLocal(fileMeta.date.instant)
+        recordedDateMeta = fileMeta.date
         duration = fileMeta.duration
 
         // Video element for resolution; duration fallback if atom parse missed
@@ -690,6 +809,7 @@ export default function UploadPage() {
         duration,
         resolution,
         recordedDate,
+        recordedDateMeta,
         thumbnailPreview: (() => {
           if (!isImageFile(item.file)) return null
           const ext = item.file.name.split('.').pop()?.toLowerCase() ?? ''
@@ -753,23 +873,13 @@ export default function UploadPage() {
       } else {
         updateQueueItemStep(item.id, 'upload', { status: 'active', progress: 0 })
 
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest()
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              const pct = Math.round((e.loaded / e.total) * 100)
-              updateQueueItemStep(item.id, 'upload', { progress: pct })
-              updateQueueItem(item.id, { progress: pct })
-            }
-          }
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) resolve()
-            else reject(new Error(`Upload failed with status ${xhr.status}`))
-          }
-          xhr.onerror = () => reject(new Error('Upload failed'))
-          xhr.open('PUT', media_upload_url)
-          xhr.setRequestHeader('Content-Type', item.file.type || 'application/octet-stream')
-          xhr.send(item.file)
+        await putToR2({
+          url: media_upload_url,
+          file: item.file,
+          onProgress: (pct) => {
+            updateQueueItemStep(item.id, 'upload', { progress: pct })
+            updateQueueItem(item.id, { progress: pct })
+          },
         })
 
         updateQueueItemStep(item.id, 'upload', { status: 'done', progress: 100 })
@@ -858,7 +968,7 @@ export default function UploadPage() {
             storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: item.duration != null ? Math.round(item.duration) : null,
-            recorded_at: fromVenueDatetimeLocal(item.recordedDate),
+            ...buildRecordedAtFields(item.recordedDate, item.recordedDateMeta, false),
             tag_ids: bulkTagIds,
             original_filename: item.file.name,
             file_size_bytes: item.file.size,
@@ -872,6 +982,15 @@ export default function UploadPage() {
 
       const { media_id } = await createRes.json()
       updateQueueItemStep(item.id, 'db-save', { status: 'done' })
+
+      if (isVideoFile(item.file)) {
+        updateQueueItemStep(item.id, 'extract', { status: 'active' })
+        const ok = await requestServerExtraction(media_id, token)
+        updateQueueItemStep(item.id, 'extract', { status: ok ? 'done' : 'skipped' })
+      } else {
+        updateQueueItemStep(item.id, 'extract', { status: 'skipped' })
+      }
+
       updateQueueItem(item.id, { status: 'done', progress: 100, mediaId: media_id })
       qc.invalidateQueries({ queryKey: queryKeys.media.all })
       qc.invalidateQueries({ queryKey: queryKeys.tags.all })

@@ -11,7 +11,9 @@
       "Bash(git --no-pager diff -- WEBSITE/src/hooks/useMedia.ts)",
       "Bash(git --no-pager diff --stat -- WEBSITE/src/components/TagPicker.tsx WEBSITE/src/components/VideoPlayer.tsx WEBSITE/src/pages/TagsPage.tsx)",
       "Bash(git --no-pager diff -U0 -- WEBSITE/src/components/TagPicker.tsx WEBSITE/src/components/VideoPlayer.tsx WEBSITE/src/pages/TagsPage.tsx)",
-      "Bash(git --no-pager diff --stat)"
+      "Bash(git --no-pager diff --stat)",
+      "Bash(npm i *)",
+      "Bash(npm test *)"
     ]
   }
 }
