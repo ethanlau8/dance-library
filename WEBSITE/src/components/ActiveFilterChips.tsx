@@ -1,3 +1,4 @@
+import { formatCalendarDate } from '../lib/format'
 import type { Tag } from '../types'
 
 interface ActiveFilterChipsProps {
@@ -23,10 +24,10 @@ export default function ActiveFilterChips({ activeFilters, onRemoveTag, onClearD
   if (tags.length === 0 && !hasDateFilter && !mediaType) return null
 
   const dateLabel = fromDate && toDate
-    ? `${formatDate(fromDate)} – ${formatDate(toDate)}`
+    ? `${formatCalendarDate(fromDate)} – ${formatCalendarDate(toDate)}`
     : fromDate
-      ? `From ${formatDate(fromDate)}`
-      : `Until ${formatDate(toDate!)}`
+      ? `From ${formatCalendarDate(fromDate)}`
+      : `Until ${formatCalendarDate(toDate)}`
 
   return (
     <div className="flex flex-wrap gap-1.5 px-4 pb-2">
@@ -62,10 +63,3 @@ export default function ActiveFilterChips({ activeFilters, onRemoveTag, onClearD
   )
 }
 
-function formatDate(date: string): string {
-  return new Date(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}

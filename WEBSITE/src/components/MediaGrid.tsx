@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
+import { formatVenueDate } from '../lib/format'
 import LazyImage from './LazyImage'
 import type { Media, Tag } from '../types'
 
@@ -109,11 +110,7 @@ export default function MediaGrid({ media, viewMode, onLoadMore, hasMore, mediaT
                 </div>
               )}
               <p className="mt-1 text-xs text-gray-500">
-                {new Date(displayDate).toLocaleDateString('en-US', {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
+                {formatVenueDate(displayDate)}
               </p>
             </button>
           )

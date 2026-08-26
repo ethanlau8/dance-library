@@ -278,9 +278,23 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
             showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
         >
-          {/* Center controls: skip back, play/pause, skip forward */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex items-center gap-8">
+          {/* Full-area tap target. Kept first in DOM and un-layered so the control clusters
+              below paint above it. It previously used -z-10, which — since this overlay is
+              not its own stacking context at full opacity — pushed it behind the <video>
+              element, so the taps it advertises never reached it. */}
+          <button
+            onClick={(e) => { e.stopPropagation(); togglePlayPause() }}
+            className="absolute inset-0"
+            aria-label="Toggle play/pause"
+          />
+
+          {/* Center controls: skip back, play/pause, skip forward.
+              The wrapper spans the whole overlay in order to centre its buttons, so it
+              must not take pointer events itself — otherwise it sits above the full-area
+              tap target and swallows every tap that isn't on one of the three buttons.
+              Only the button cluster opts back in. */}
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <div className="pointer-events-auto flex items-center gap-8">
               {/* Skip back 10s */}
               <button
                 onClick={(e) => { e.stopPropagation(); skipBack() }}
@@ -321,15 +335,8 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
             </div>
           </div>
 
-          {/* Tap area for showing/hiding controls (behind the buttons) */}
-          <button
-            onClick={(e) => { e.stopPropagation(); togglePlayPause() }}
-            className="absolute inset-0 -z-10"
-            aria-label="Toggle play/pause"
-          />
-
-          {/* Bottom controls bar — relative so it sits above the -z-10 tap area */}
-          <div className="relative bg-gradient-to-t from-black/60 to-transparent px-3 pb-2 pt-8">
+          {/* Bottom controls bar — layered above the tap target */}
+          <div className="relative z-10 bg-gradient-to-t from-black/60 to-transparent px-3 pb-2 pt-8">
             {/* Seekbar */}
             <div
               ref={seekbarRef}

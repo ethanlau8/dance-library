@@ -8,6 +8,8 @@ import { useWatchProgress } from '../hooks/useWatchProgress'
 import { queryKeys } from '../lib/queryKeys'
 import { thumbnailUrl } from '../lib/thumbnailUrl'
 import { generateThumbnail } from '../lib/ffmpeg'
+import { sameInstant, formatVenueDate } from '../lib/format'
+import { toVenueDatetimeLocal, fromVenueDatetimeLocal } from '../lib/venue'
 import VideoPlayer from '../components/VideoPlayer'
 import TagPicker from '../components/TagPicker'
 import type { Media, Tag, TimestampTag } from '../types'
@@ -18,15 +20,6 @@ function formatTime(seconds: number): string {
   const s = Math.floor(seconds % 60)
   if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   return `${m}:${s.toString().padStart(2, '0')}`
-}
-
-function formatDate(dateStr: string): string {
-  if (!dateStr) return ''
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
 }
 
 function parseTimeInput(value: string): number | null {
@@ -114,6 +107,12 @@ export default function VideoDetailPage() {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-media-url?media_id=${id}`,
         { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }
       )
+      // An error response still parses as JSON, so without this check a 401/403/404
+      // resolves as a successful `null` and the player waits for a URL that never comes.
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `Could not load video (${res.status})`)
+      }
       const data = await res.json()
       return data.url ?? null
     },
@@ -128,7 +127,17 @@ export default function VideoDetailPage() {
   const timestampTags = tagsQuery.data?.timestampTags ?? []
   const videoUrl = signedUrlQuery.data ?? null
   const loading = mediaQuery.isLoading || tagsQuery.isLoading
-  const error = mediaQuery.error?.message ?? tagsQuery.error?.message ?? (signedUrlQuery.isError && media?.media_type !== 'image' ? 'Could not load video URL' : null)
+  const needsVideoUrl = media != null && media.media_type !== 'image'
+  // Two ways playback can fail without the page itself failing: the request errored, or it
+  // succeeded with no URL (a row with no storage_path). Both used to render forever-spinners.
+  const playbackError = !needsVideoUrl
+    ? null
+    : signedUrlQuery.isError
+      ? (signedUrlQuery.error as Error | null)?.message ?? 'Could not load video URL'
+      : signedUrlQuery.isSuccess && signedUrlQuery.data == null
+        ? 'This video has no playable file.'
+        : null
+  const error = mediaQuery.error?.message ?? tagsQuery.error?.message ?? null
   const [activeTimestampId, setActiveTimestampId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -143,6 +152,9 @@ export default function VideoDetailPage() {
   const [editTitle, setEditTitle] = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editRecordedDate, setEditRecordedDate] = useState('')
+  // Only write recorded_at when the user actually edits the field. Without this
+  // guard, saving an unrelated change (title, tags) also rewrites the date.
+  const [recordedDateDirty, setRecordedDateDirty] = useState(false)
 
   // Editable tag drafts
   const [editTagIds, setEditTagIds] = useState<string[]>([])
@@ -186,10 +198,14 @@ export default function VideoDetailPage() {
     return () => mq.removeEventListener('change', handler)
   }, [])
 
-  // Refetch all data after mutations
+  // Refetch all data after mutations. Returns the settle promise: callers that
+  // exit edit mode must await it, or re-entering the editor before the refetch
+  // lands initialises the draft from the pre-save cached value.
   const refetchAll = useCallback(() => {
-    qc.invalidateQueries({ queryKey: queryKeys.media.detail(id ?? '') })
-    qc.invalidateQueries({ queryKey: queryKeys.mediaTags.byMedia(id ?? '') })
+    return Promise.all([
+      qc.invalidateQueries({ queryKey: queryKeys.media.detail(id ?? '') }),
+      qc.invalidateQueries({ queryKey: queryKeys.mediaTags.byMedia(id ?? '') }),
+    ])
   }, [id, qc])
 
   // Save progress every 5 seconds
@@ -241,9 +257,8 @@ export default function VideoDetailPage() {
     if (!media) return
     setEditTitle(media.title)
     setEditDescription(media.description ?? '')
-    setEditRecordedDate(
-      media.recorded_at ? media.recorded_at.slice(0, 16) : ''
-    )
+    setEditRecordedDate(toVenueDatetimeLocal(media.recorded_at))
+    setRecordedDateDirty(false)
     setEditTagIds(videoLevelTags.map((t) => t.id))
     setEditTags([...videoLevelTags])
     setEditTimestamps([...timestampTags])
@@ -255,6 +270,7 @@ export default function VideoDetailPage() {
 
   function cancelEditMode() {
     setIsEditMode(false)
+    setRecordedDateDirty(false)
     setEditError(null)
     setTsCreationStep('idle')
     setEditingTimestamp(null)
@@ -280,11 +296,11 @@ export default function VideoDetailPage() {
       if ((editDescription.trim() || null) !== media.description) {
         metadata.description = editDescription.trim() || null
       }
-      const newRecordedAt = editRecordedDate
-        ? new Date(editRecordedDate).toISOString()
-        : null
-      if (newRecordedAt !== media.recorded_at) {
-        metadata.recorded_at = newRecordedAt
+      if (recordedDateDirty) {
+        const newRecordedAt = fromVenueDatetimeLocal(editRecordedDate)
+        if (!sameInstant(newRecordedAt, media.recorded_at)) {
+          metadata.recorded_at = newRecordedAt
+        }
       }
 
       // 2. Compute video-level tag diff
@@ -363,9 +379,10 @@ export default function VideoDetailPage() {
         throw new Error(data.error || `Save failed with status ${res.status}`)
       }
 
-      // Invalidate caches and exit edit mode
+      // Await the refetch before leaving edit mode, so re-entering the editor
+      // cannot initialise its draft from the stale pre-save value.
+      await refetchAll()
       setIsEditMode(false)
-      refetchAll()
       qc.invalidateQueries({ queryKey: queryKeys.media.all })
       qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     } catch (err) {
@@ -406,6 +423,9 @@ export default function VideoDetailPage() {
     const time = videoRef.current?.currentTime ?? 0
     setTsNewEnd(Math.max(time, tsNewStart))
     setTsCreationStep('pick-tag')
+    // editTsTagId is owned by the *edit* flow. Left over from a previous edit it would
+    // pre-select an unrelated tag here, and a newly created tag would land behind it.
+    setEditTsTagId('')
     setShowTsTagPicker(true)
   }
 
@@ -604,9 +624,12 @@ export default function VideoDetailPage() {
 
       setReplaceProgress(100)
 
-      // Invalidate caches to refetch video URL and media data
+      // Invalidate caches to refetch video URL and media data. media.all is
+      // needed too — the grid caches duration and thumbnail per row, so without
+      // it the list keeps showing pre-replace values until staleTime expires.
       qc.invalidateQueries({ queryKey: queryKeys.media.detail(id) })
       qc.invalidateQueries({ queryKey: queryKeys.media.signedUrl(id) })
+      qc.invalidateQueries({ queryKey: queryKeys.media.all })
     } catch (err) {
       console.error('Replace error:', err)
       setEditError(
@@ -798,6 +821,17 @@ export default function VideoDetailPage() {
                 </div>
               )}
             </div>
+          ) : playbackError ? (
+            <div className="flex aspect-video flex-col items-center justify-center gap-3 bg-gray-200 px-6 text-center">
+              <p className="text-sm text-gray-600">{playbackError}</p>
+              <button
+                onClick={() => signedUrlQuery.refetch()}
+                disabled={signedUrlQuery.isFetching}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {signedUrlQuery.isFetching ? 'Retrying…' : 'Try again'}
+              </button>
+            </div>
           ) : !error ? (
             <div className="flex aspect-video items-center justify-center bg-gray-200">
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
@@ -824,12 +858,17 @@ export default function VideoDetailPage() {
                   {/* Editable recorded date */}
                   <div className="mt-2">
                     <label className="block text-xs font-medium text-gray-500 mb-1">
-                      Recorded Date & Time
+                      Recorded Date &amp; Time{' '}
+                      <span className="font-normal text-gray-400">(venue time)</span>
                     </label>
                     <input
                       type="datetime-local"
+                      step="1"
                       value={editRecordedDate}
-                      onChange={(e) => setEditRecordedDate(e.target.value)}
+                      onChange={(e) => {
+                        setEditRecordedDate(e.target.value)
+                        setRecordedDateDirty(true)
+                      }}
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
                     />
                   </div>
@@ -853,7 +892,7 @@ export default function VideoDetailPage() {
                 <>
                   <h1 className="text-xl font-bold text-gray-900">{media.title}</h1>
                   <p className="mt-1 text-sm text-gray-500">
-                    {formatDate(media.recorded_at || media.created_at)}
+                    {formatVenueDate(media.recorded_at || media.created_at)}
                     {media.duration != null && ` · ${formatTime(media.duration)}`}
                   </p>
                   {media.description && (

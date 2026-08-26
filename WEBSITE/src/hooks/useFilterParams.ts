@@ -3,24 +3,43 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { queryKeys } from '../lib/queryKeys'
+import { parseDateOnly } from '../lib/venue'
 import type { SortBy, TagMode } from './useMedia'
 import type { Tag } from '../types'
 
 const DEFAULT_SORT: SortBy = 'recorded_date'
 
+// URL parameters are user-controlled: a stale bookmark, a hand-edited address
+// bar, or a link shared after a rename. Casting them straight to a union type
+// tells the compiler they're valid without making them so — `?sort=xyz` used to
+// fall off the end of applySorting's switch and take the whole page down with a
+// TypeError. Everything read from the URL is validated here, at the boundary.
+const SORT_VALUES: readonly SortBy[] = ['upload_date', 'recorded_date', 'alphabetical']
+const TAG_MODES: readonly TagMode[] = ['and', 'or']
+const MEDIA_TYPES = ['video', 'image'] as const
+
+function oneOf<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {
+  return value !== null && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
+}
+
 export function useFilterParams() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   // --- Read from URL ---
-  const sortBy: SortBy = (searchParams.get('sort') as SortBy) || DEFAULT_SORT
+  const sortBy = oneOf(searchParams.get('sort'), SORT_VALUES, DEFAULT_SORT)
   const tagIds = useMemo(() => {
     const raw = searchParams.get('tags')
     return raw ? raw.split(',').filter(Boolean) : []
   }, [searchParams])
-  const tagMode: TagMode = (searchParams.get('match') as TagMode) || 'and'
-  const fromDate = searchParams.get('from')
-  const toDate = searchParams.get('to')
-  const mediaType = searchParams.get('type')
+  const tagMode = oneOf(searchParams.get('match'), TAG_MODES, 'and')
+  // parseDateOnly rejects both malformed and calendar-impossible dates, so an
+  // input like 2026-02-31 is dropped rather than silently normalised to Mar 3.
+  const fromDate = parseDateOnly(searchParams.get('from') ?? '') ? searchParams.get('from') : null
+  const toDate = parseDateOnly(searchParams.get('to') ?? '') ? searchParams.get('to') : null
+  const rawMediaType = searchParams.get('type')
+  const mediaType = rawMediaType !== null && (MEDIA_TYPES as readonly string[]).includes(rawMediaType)
+    ? rawMediaType
+    : null
 
   // --- Resolve tag IDs to full Tag objects for display ---
   const { data: tagObjects = [] } = useQuery({

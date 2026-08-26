@@ -97,7 +97,15 @@ Deno.serve(async (req: Request) => {
     const updates: Record<string, unknown> = {};
     if (metadata.title !== undefined) updates.title = metadata.title;
     if (metadata.description !== undefined) updates.description = metadata.description;
-    if (metadata.recorded_at !== undefined) updates.recorded_at = metadata.recorded_at;
+    if (metadata.recorded_at !== undefined) {
+      updates.recorded_at = metadata.recorded_at;
+      // This endpoint is, by definition, a person editing metadata. Record that
+      // provenance here rather than trusting the client to send it: the backfill
+      // must never overwrite a human's correction, and a value it cannot
+      // attribute is indistinguishable from one it extracted itself.
+      updates.recorded_at_source = metadata.recorded_at === null ? null : "manual";
+      updates.recorded_at_precision = metadata.recorded_at === null ? null : "second";
+    }
     if (Object.keys(updates).length > 0) {
       updates.updated_at = new Date().toISOString();
       const { error } = await supabase.from("media").update(updates).eq("id", media_id);

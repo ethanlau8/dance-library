@@ -45,6 +45,25 @@ export default function TagPicker({
     fetchData()
   }, [])
 
+  // Without this the suggestion list stays open until a category is picked, and because it
+  // is absolutely positioned with z-10 it covers — and swallows clicks on — the Description
+  // field and the Cancel/Create buttons beneath it.
+  useEffect(() => {
+    if (!showCategorySuggestions) return
+    function handlePointerDown(e: PointerEvent) {
+      if (!categoryRef.current?.contains(e.target as Node)) setShowCategorySuggestions(false)
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setShowCategorySuggestions(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showCategorySuggestions])
+
   async function fetchData() {
     setLoading(true)
     const [tagsRes, catsRes] = await Promise.all([
@@ -170,11 +189,16 @@ export default function TagPicker({
         category_name: (tagData as any).tag_categories?.name ?? 'Uncategorized',
       }
 
-      setTags((prev) => [...prev, newTag])
-      onChange([...selectedTagIds, newTag.id])
+      setTags((prev) => [...prev, newTag].sort((a, b) => a.name.localeCompare(b.name)))
+      // Match toggleTag's selection policy: single-select replaces rather than appends.
+      // Appending here left the previously selected id first, so callers reading tagIds[0]
+      // silently kept the old tag and discarded the one just created.
+      onChange(multiSelect ? [...selectedTagIds, newTag.id] : [newTag.id])
       setShowCreate(false)
       setSearch('')
       qc.invalidateQueries({ queryKey: queryKeys.tags.all })
+      // Single-select picks one and dismisses, exactly as selecting an existing tag does.
+      if (!multiSelect) onClose()
     } catch (err) {
       console.error('Failed to create tag:', err)
     } finally {

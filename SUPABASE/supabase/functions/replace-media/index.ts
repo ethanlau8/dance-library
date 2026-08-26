@@ -103,16 +103,22 @@ Deno.serve(async (req: Request) => {
   const oldStoragePath = existing.storage_path;
   const oldThumbnailPath = existing.thumbnail_path;
 
-  // Update media row with new paths
+  // Update media row with new paths.
+  // Metadata fields use presence-check semantics (matching update-media): an
+  // omitted field leaves the column untouched, and only an explicit null clears
+  // it. Using `?? null` here would silently wipe recorded_at and duration on
+  // every replace, since the caller does not always send them.
+  const updates: Record<string, unknown> = {
+    storage_path: new_storage_path,
+    thumbnail_path: new_thumbnail_path,
+    updated_at: new Date().toISOString(),
+  };
+  if (duration !== undefined) updates.duration = duration;
+  if (recorded_at !== undefined) updates.recorded_at = recorded_at;
+
   const { error: updateError } = await supabase
     .from("media")
-    .update({
-      storage_path: new_storage_path,
-      thumbnail_path: new_thumbnail_path,
-      duration: duration ?? null,
-      recorded_at: recorded_at ?? null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updates)
     .eq("id", media_id);
 
   if (updateError) {

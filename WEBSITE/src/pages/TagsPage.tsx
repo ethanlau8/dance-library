@@ -50,6 +50,25 @@ export default function TagsPage() {
     fetchData()
   }, [])
 
+  // Without this the suggestion list stays open until a category is picked, and because it
+  // is absolutely positioned with z-10 it covers — and swallows clicks on — the Description
+  // field and the Cancel/Create buttons beneath it.
+  useEffect(() => {
+    if (!showCategorySuggestions) return
+    function handlePointerDown(e: PointerEvent) {
+      if (!categoryRef.current?.contains(e.target as Node)) setShowCategorySuggestions(false)
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setShowCategorySuggestions(false)
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showCategorySuggestions])
+
   async function fetchData() {
     setLoading(true)
     const [tagsRes, catsRes] = await Promise.all([

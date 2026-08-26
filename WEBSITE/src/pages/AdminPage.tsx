@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { formatDate } from '../lib/format'
 import type { Role } from '../types'
 
 interface UserRow {
@@ -79,14 +80,6 @@ export default function AdminPage() {
     const ownerRole = roles.find((r) => r.name === 'Owner')
     if (!ownerRole) return false
     return userRow.role_id === ownerRole.id && ownerCount <= 1
-  }
-
-  function formatDate(dateStr: string) {
-    return new Date(dateStr).toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
   }
 
   if (loading) {

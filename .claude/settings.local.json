@@ -28,7 +28,15 @@
       "Bash(ffprobe -version)",
       "Bash(/c/Users/minds/AppData/Local/Programs/ffmpeg/bin/ffmpeg.exe -version)",
       "Bash(command -v ffmpeg)",
-      "Bash(command -v ffprobe)"
+      "Bash(command -v ffprobe)",
+      "Bash(python -c ' *)",
+      "Bash(python -X utf8 -c ' *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(docker rm *)",
+      "Bash(docker run *)",
+      "Bash(docker exec *)",
+      "Bash(docker exec dl-pgtest psql -U postgres -d dltest -v ON_ERROR_STOP=1 -c ' *)",
+      "Bash(docker exec dl-pgtest psql -U postgres -d dltest -q -c ' *)"
     ]
   }
 }

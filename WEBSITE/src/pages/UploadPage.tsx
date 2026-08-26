@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '../lib/queryKeys'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { usePermissions } from '../hooks/usePermissions'
 import { generateThumbnail, extractVideoMetadata, extractFileMetadata } from '../lib/ffmpeg'
 import { runWithConcurrency } from '../lib/concurrency'
 import { formatFileSize, formatDuration } from '../lib/format'
+import { toVenueDatetimeLocal, fromVenueDatetimeLocal } from '../lib/venue'
 import TagPicker from '../components/TagPicker'
 import type { Tag } from '../types'
 
@@ -36,11 +39,15 @@ function extractRecordedDateFromFile(file: File): string | null {
   const nameMatch = file.name.match(/(\d{4})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})[-_]?(\d{2})/)
   if (nameMatch) {
     const [, y, mo, d, h, mi, s] = nameMatch
-    const parsed = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`)
+    // Resolve the wall clock against the venue before range-checking it. Reading
+    // it in the browser's zone can push a valid afternoon timestamp past "now"
+    // for anyone west of the venue, silently demoting it to the date-only branch.
+    const instant = fromVenueDatetimeLocal(`${y}-${mo}-${d}T${h}:${mi}:${s}`)
     const now = Date.now()
     const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
-    if (!isNaN(parsed.getTime()) && parsed.getTime() > tenYearsAgo && parsed.getTime() <= now) {
-      return `${y}-${mo}-${d}T${h}:${mi}`
+    const t = instant ? new Date(instant).getTime() : NaN
+    if (!isNaN(t) && t > tenYearsAgo && t <= now) {
+      return `${y}-${mo}-${d}T${h}:${mi}:${s}`
     }
   }
 
@@ -61,9 +68,9 @@ function extractRecordedDateFromFile(file: File): string | null {
     const now = Date.now()
     const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
     if (!isNaN(modified.getTime()) && modified.getTime() > tenYearsAgo && modified.getTime() <= now) {
-      // Preserve full datetime from lastModified, format for datetime-local input
-      const iso = modified.toISOString()
-      return iso.slice(0, 16) // "YYYY-MM-DDTHH:MM"
+      // lastModified is an instant; render it as the venue's wall clock rather
+      // than slicing UTC digits, which would shift it by the venue offset.
+      return toVenueDatetimeLocal(modified.toISOString())
     }
   }
 
@@ -231,6 +238,11 @@ export default function UploadPage() {
   const [showTagPicker, setShowTagPicker] = useState(false)
   const [singleSteps, setSingleSteps] = useState<UploadStep[]>([])
   const [completedMediaId, setCompletedMediaId] = useState<string | null>(null)
+  // Set as soon as the user edits the recorded-date field, so in-flight metadata
+  // extraction cannot overwrite what they typed. A ref, not state: it is read
+  // inside an async callback that must see the latest value.
+  const recordedDateTouchedRef = useRef(false)
+  const qc = useQueryClient()
   const [thumbnailWarning, setThumbnailWarning] = useState<string | null>(null)
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
 
@@ -305,6 +317,8 @@ export default function UploadPage() {
 
   async function handleSingleFileSelected(selectedFile: File) {
     setFile(selectedFile)
+    // A date typed for the previous file must not suppress extraction for this one.
+    recordedDateTouchedRef.current = false
     setMode('single-form')
     setError(null)
     setDuplicateWarning(null)
@@ -335,7 +349,12 @@ export default function UploadPage() {
     if (mediaType === 'video') {
       // Binary atom parse — single 512KB read for both date and duration
       const fileMeta = await extractFileMetadata(selectedFile)
-      if (fileMeta.creationDate) setRecordedDate(fileMeta.creationDate)
+      // creationDate is an instant; the input holds a venue wall clock.
+      // Extraction is async and the form is already interactive, so never
+      // overwrite a date the user has typed in the meantime.
+      if (fileMeta.creationDate && !recordedDateTouchedRef.current) {
+        setRecordedDate(toVenueDatetimeLocal(fileMeta.creationDate))
+      }
 
       // Video element for resolution; its duration is a fallback if atom parse missed
       extractVideoMetadata(selectedFile)
@@ -526,7 +545,7 @@ export default function UploadPage() {
             storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: duration != null ? Math.round(duration) : null,
-            recorded_at: recordedDate ? new Date(recordedDate).toISOString() : null,
+            recorded_at: fromVenueDatetimeLocal(recordedDate),
             tag_ids: selectedTagIds,
             original_filename: file.name,
             file_size_bytes: file.size,
@@ -542,6 +561,10 @@ export default function UploadPage() {
       updateSingleStep('db-save', { status: 'done' })
 
       setCompletedMediaId(media_id)
+      // Without this the new video is absent from any already-mounted list until
+      // staleTime expires (2 min), so it looks like the upload silently failed.
+      qc.invalidateQueries({ queryKey: queryKeys.media.all })
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
       setMode('single-done')
     } catch (err) {
       console.error('Upload error:', err)
@@ -563,6 +586,7 @@ export default function UploadPage() {
     setTitle('')
     setDescription('')
     setRecordedDate('')
+    recordedDateTouchedRef.current = false
     setSelectedTagIds([])
     setSelectedTags([])
     setSingleSteps([])
@@ -649,7 +673,7 @@ export default function UploadPage() {
       if (isVideoFile(item.file)) {
         // Binary atom parse — single 512KB read for date + duration
         const fileMeta = await extractFileMetadata(item.file)
-        if (fileMeta.creationDate) recordedDate = fileMeta.creationDate
+        if (fileMeta.creationDate) recordedDate = toVenueDatetimeLocal(fileMeta.creationDate)
         duration = fileMeta.duration
 
         // Video element for resolution; duration fallback if atom parse missed
@@ -834,7 +858,7 @@ export default function UploadPage() {
             storage_path: mediaType === 'image' ? null : media_storage_path,
             thumbnail_path: finalThumbnailPath,
             duration: item.duration != null ? Math.round(item.duration) : null,
-            recorded_at: item.recordedDate ? new Date(item.recordedDate).toISOString() : null,
+            recorded_at: fromVenueDatetimeLocal(item.recordedDate),
             tag_ids: bulkTagIds,
             original_filename: item.file.name,
             file_size_bytes: item.file.size,
@@ -849,6 +873,8 @@ export default function UploadPage() {
       const { media_id } = await createRes.json()
       updateQueueItemStep(item.id, 'db-save', { status: 'done' })
       updateQueueItem(item.id, { status: 'done', progress: 100, mediaId: media_id })
+      qc.invalidateQueries({ queryKey: queryKeys.media.all })
+      qc.invalidateQueries({ queryKey: queryKeys.tags.all })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed'
       setQueue(prev => prev.map(qi => {
@@ -1108,8 +1134,12 @@ export default function UploadPage() {
             <label className="mb-1 block text-sm font-medium text-gray-700">Recorded Date & Time</label>
             <input
               type="datetime-local"
+              step="1"
               value={recordedDate}
-              onChange={(e) => setRecordedDate(e.target.value)}
+              onChange={(e) => {
+                setRecordedDate(e.target.value)
+                recordedDateTouchedRef.current = true
+              }}
               className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>

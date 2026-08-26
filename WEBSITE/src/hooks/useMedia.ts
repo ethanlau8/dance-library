@@ -2,6 +2,7 @@ import { useMemo, useCallback } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { queryKeys } from '../lib/queryKeys'
+import { venueDayStartISO, nextCalendarDay } from '../lib/venue'
 import type { Media, Tag } from '../types'
 
 export type SortBy = 'upload_date' | 'recorded_date' | 'alphabetical'
@@ -198,16 +199,43 @@ function extractTags(items: any[]): { mediaItems: Media[]; tagMap: Record<string
   return { mediaItems, tagMap }
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+
+/** Reject anything that isn't a plain YYYY-MM-DD calendar date. These values reach us
+ *  from the URL, and they get interpolated into PostgREST filter syntax where commas
+ *  and parentheses are grammar rather than data. */
+function safeDate(value: string | null): string | null {
+  if (!value || !DATE_ONLY.test(value)) return null
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return Number.isNaN(parsed.getTime()) ? null : value
+}
+
 function applyDateFilter(
   query: ReturnType<ReturnType<typeof supabase.from>['select']>,
   fromDate: string | null,
   toDate: string | null,
 ) {
-  if (fromDate) {
-    query = query.or(`recorded_at.gte.${fromDate},and(recorded_at.is.null,created_at.gte.${fromDate})`)
+  const from = safeDate(fromDate)
+  const to = safeDate(toDate)
+
+  // Both bounds are resolved to the instant that starts the chosen day *at the
+  // venue*, not at UTC. A bare date-only string means UTC midnight, and 51% of
+  // the library has a UTC date that differs from its local one — the recording
+  // peak is 22:00 Pacific, which is 05:00 UTC the next day. Filtering on UTC
+  // days therefore returns the previous evening's classes and misses the
+  // selected day's. The upper bound stays exclusive at the next day's start.
+  if (from) {
+    const start = venueDayStartISO(from)
+    if (start) {
+      query = query.or(`recorded_at.gte.${start},and(recorded_at.is.null,created_at.gte.${start})`)
+    }
   }
-  if (toDate) {
-    query = query.or(`recorded_at.lte.${toDate},and(recorded_at.is.null,created_at.lte.${toDate})`)
+  if (to) {
+    const nextDay = nextCalendarDay(to)
+    const end = nextDay ? venueDayStartISO(nextDay) : null
+    if (end) {
+      query = query.or(`recorded_at.lt.${end},and(recorded_at.is.null,created_at.lt.${end})`)
+    }
   }
   return query
 }
@@ -223,5 +251,9 @@ function applySorting(
       return query.order('recorded_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
     case 'alphabetical':
       return query.order('title', { ascending: true })
+    default:
+      // Defence in depth: useFilterParams validates sortBy, but falling off the
+      // end of this switch returns undefined and the caller then dereferences it.
+      return query.order('recorded_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false })
   }
 }

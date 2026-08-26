@@ -2,6 +2,15 @@
 // Reads the first 512KB of a video file to extract creation date and duration
 // from MP4/MOV container atoms. Covers iOS (com.apple.quicktime.creationdate),
 // Android/cameras (©day), and any file with a valid mvhd atom.
+//
+// `creationDate` is always an INSTANT (ISO 8601 with an offset) or null. The
+// atoms themselves are not consistent about this — the Apple atom carries a
+// real offset, mvhd is UTC, and a filename timestamp is a local wall clock —
+// so the atom-derived sources are normalised through toInstant(); mvhd and the
+// filename pattern build their instants directly, since their input shape is
+// already known exactly.
+
+import { fromVenueDatetimeLocal } from './venue'
 
 function findSequence(
   bytes: Uint8Array,
@@ -17,12 +26,43 @@ function findSequence(
   return -1
 }
 
-function isValidDateString(text: string): boolean {
-  if (!text || text.length < 10) return false
-  const d = new Date(text)
-  if (isNaN(d.getTime())) return false
-  const year = d.getFullYear()
-  return year >= 2000 && year <= 2035
+/**
+ * Turn a container date string into an instant, or null.
+ *
+ * This is both the parser and the validity gate. Keeping them separate was a
+ * bug: a gate built on bare `new Date()` accepts strings — RFC 1123, for one —
+ * that the normaliser below cannot read, so a value would pass validation and
+ * then silently become null.
+ *
+ * Three shapes, in order:
+ *   1. Carries an offset  → already an instant.
+ *   2. Zone-less ISO      → a wall clock, and wall clocks here are venue-local.
+ *   3. Anything else Date can parse (RFC 1123 etc.) → already an instant.
+ *
+ * A basic-format offset (`-0700`) is rewritten to `-07:00` first, because the
+ * ECMAScript Date Time String Format requires the colon and engines accepting
+ * the basic form do so by implementation-specific heuristic, not by contract.
+ * The year range is checked in UTC — using the browser's local year would make
+ * acceptance depend on the viewer's timezone near the range boundaries.
+ */
+function toInstant(text: string): string | null {
+  if (!text || text.trim().length < 10) return null
+  const s = text.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+
+  let iso: string | null
+  if (/(?:Z|[+-]\d{2}:\d{2})$/.test(s)) {
+    const d = new Date(s)
+    iso = isNaN(d.getTime()) ? null : d.toISOString()
+  } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    iso = fromVenueDatetimeLocal(s)
+  } else {
+    const d = new Date(s)
+    iso = isNaN(d.getTime()) ? null : d.toISOString()
+  }
+
+  if (!iso) return null
+  const year = new Date(iso).getUTCFullYear()
+  return year >= 2000 && year <= 2035 ? iso : null
 }
 
 interface MvhdFields {
@@ -79,7 +119,7 @@ function findAppleCreationDate(bytes: Uint8Array): string | null {
   const m = text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-Z][^\x00-\x1f]{0,6})/)
     ?? text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/)
   if (!m) return null
-  return isValidDateString(m[1]) ? m[1] : null
+  return toInstant(m[1])
 }
 
 // Priority 2: ©day atom — QuickTime user data (Android, GoPro, QuickTime)
@@ -93,7 +133,8 @@ function findCopyDayAtom(bytes: Uint8Array, view: DataView): string | null {
     const strLen = view.getUint16(idx + 4, false)
     if (strLen > 0 && strLen < 256 && idx + 8 + strLen <= bytes.length) {
       const text = new TextDecoder().decode(bytes.subarray(idx + 8, idx + 8 + strLen)).trim()
-      if (isValidDateString(text)) return text
+      const parsed = toInstant(text)
+      if (parsed) return parsed
     }
   }
 
@@ -108,7 +149,7 @@ function findCopyDayAtom(bytes: Uint8Array, view: DataView): string | null {
       .decode(bytes.subarray(valStart, valEnd))
       .replace(/\x00.*/, '')
       .trim()
-    if (isValidDateString(text)) return text
+    return toInstant(text)
   }
 
   return null
@@ -123,7 +164,7 @@ function mvhdCreationDate(fields: MvhdFields): string | null {
   if (isNaN(d.getTime())) return null
   const year = d.getUTCFullYear()
   if (year < 2000 || year > 2035) return null
-  return d.toISOString().slice(0, 19) // "YYYY-MM-DDTHH:MM:SS"
+  return d.toISOString() // a UTC instant; keep the Z so it cannot be reparsed as local
 }
 
 // Priority 4: datetime pattern in filename (e.g. VID_20250315_143022, 2025_03_08_14_03_35_IMG)
@@ -135,7 +176,9 @@ function filenameDatePattern(filename: string): string | null {
   const now = Date.now()
   const tenYearsAgo = now - 10 * 365.25 * 24 * 60 * 60 * 1000
   if (isNaN(parsed.getTime()) || parsed.getTime() <= tenYearsAgo || parsed.getTime() > now) return null
-  return `${y}-${mo}-${d}T${h}:${mi}:${s}`
+  // A filename timestamp is a wall clock written by the capturing device, so it
+  // denotes venue-local time, not UTC.
+  return fromVenueDatetimeLocal(`${y}-${mo}-${d}T${h}:${mi}:${s}`)
 }
 
 /**
