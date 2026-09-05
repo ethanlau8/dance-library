@@ -842,49 +842,46 @@ A simple, single-page authentication screen.
 
 Accessed from the hamburger menu via "Tags." Allows browsing and managing the tag vocabulary.
 
+The screen is a **table with two tabs**, not a category-grouped list. A grouped list reads fine at twenty tags and stops working at two hundred: there is no way to compare tags across categories, no way to see which tags actually carry the library, and a category exists only as a header above its tags — so an empty one is invisible and a tag cannot be moved between them.
+
 ```
-┌──────────────────────────────────┐
-│ ← Tags               [+ New Tag] │
-│ ┌────────────────────────────┐   │
-│ │  🔍 Search tags...         │   │
-│ └────────────────────────────┘   │
-│                                  │
-│ Style                            │
-│ ┌────────────────────────────┐   │
-│ │ bachata              📁 ✎  │   │
-│ │ salsa                📁 ✎  │   │
-│ │ zouk                    ✎  │   │
-│ │ kizomba                 ✎  │   │
-│ └────────────────────────────┘   │
-│                                  │
-│ Difficulty                       │
-│ ┌────────────────────────────┐   │
-│ │ beginner                ✎  │   │
-│ │ intermediate            ✎  │   │
-│ │ advanced                ✎  │   │
-│ └────────────────────────────┘   │
-│                                  │
-│ Move                             │
-│ ┌────────────────────────────┐   │
-│ │ cross-body lead      📁 ✎  │   │
-│ │ inside turn             ✎  │   │
-│ │ hammer lock             ✎  │   │
-│ │ copa                    ✎  │   │
-│ └────────────────────────────┘   │
-│                                  │
-└──────────────────────────────────┘
+┌────────────────────────────────────────────────────────┐
+│  [ Tags 87 ] [ Categories 6 ]              [+ New Tag] │
+│  🔍 Search name, description, category…                │
+│  [All categories ▾]  [Sort: Name ▾]                    │
+├────────────────────────────────────────────────────────┤
+│ ☐  NAME           DESCRIPTION      CATEGORY   USED     │
+│ ☑  bachata        dominican…      [Style  ▾]    42  📁✎×│
+│ ☑  zouk           brazilian…      [Style  ▾]    18    ✎×│
+│ ☐  copa           —               [Move   ▾]     7    ✎×│
+│ ☐  inside turn    lead turns…     [Move   ▾]     3    ✎×│
+├────────────────────────────────────────────────────────┤
+│ 2 selected  [Move to category… ▾]  [Delete]     Cancel │
+└────────────────────────────────────────────────────────┘
 ```
 
 ### Behavior
 
-**Layout:** All tags listed under their category headers in a single scrollable view.
+**Tabs:** `Tags` and `Categories`, each showing its row count. Categories are first-class records — an empty category is a normal, editable state and is never deleted automatically.
 
-**Search:** Filters the tag list as the user types, across all categories.
+**Columns (Tags):** name, description, category, and **usage count** — how many videos carry the tag. Usage is the signal that makes a large vocabulary legible: it separates a tag doing real work from a typo applied once.
 
-**Folder indicator (📁):** Shown on tags that have `is_folder` set to true. Users with `manage_folders` permission can tap to toggle the folder status on or off.
+**Sort:** by name, by category, or by most used. On the Categories tab, by name or by most tags.
 
-**Edit button (✎):** Opens an inline edit view for the tag's name and description. Only visible to users with `create_tags` permission.
+**Search:** filters on name, description, *and* category name, so `style` finds everything in that category without changing the category filter.
 
-**[+ New Tag]:** Opens the create new tag sub-flow (see Section 9). Only visible to users with `create_tags` permission.
+**Category filter:** narrows the table to one category. Clicking a category's tag count on the Categories tab jumps to the Tags tab filtered to it.
 
-**Read-only for Viewers:** Users without `create_tags` or `manage_folders` see the tag list without any action controls — browse only.
+**Changing a tag's category:** the category cell is a dropdown; changing it moves the tag immediately. Names are unique within a category, so a move that would collide reports the conflict rather than failing silently.
+
+**Multi-select:** row checkboxes reveal a bulk bar with *Move to category…* and *Delete*. Selection is kept across searches so tags can be gathered from several queries before acting; the delete sheet lists every selected tag by name so nothing is acted on unseen.
+
+**Folder indicator (📁):** shown on tags with `is_folder` set. Requires `manage_folders`.
+
+**Edit (✎):** opens a sheet for name, description, and category. When editing, the category is a plain dropdown of existing categories — creating one is the deliberate job of *New Category*, not a side effect of a typo in a rename field.
+
+**Deleting a category** asks what happens to its tags: move them to another category (keeping them and everything tagged with them), or delete the tags too (removing them from every video). It never silently discards either.
+
+**Responsive:** the same grid reflows on narrow screens — name, description, category, and usage stack in one column with the row actions to the right; from `md` up they line up as spreadsheet columns.
+
+**Read-only for Viewers:** users without `create_tags` or `manage_folders` see the table without checkboxes or action controls — browse only.

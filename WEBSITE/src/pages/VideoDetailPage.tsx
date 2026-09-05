@@ -12,6 +12,7 @@ import { sameInstant, formatVenueDate } from '../lib/format'
 import { toVenueDatetimeLocal, fromVenueDatetimeLocal } from '../lib/venue'
 import VideoPlayer from '../components/VideoPlayer'
 import TagPicker from '../components/TagPicker'
+import BottomSheet from '../components/BottomSheet'
 import type { Media, Tag, TimestampTag } from '../types'
 
 function formatTime(seconds: number): string {
@@ -747,7 +748,7 @@ export default function VideoDetailPage() {
       {/* Side-by-side layout on desktop */}
       <div className="lg:grid lg:grid-cols-[1fr_420px] lg:gap-6 lg:px-4">
         {/* Left column: Video player */}
-        <div className="lg:sticky lg:top-14 lg:self-start">
+        <div className="lg:sticky lg:top-0 lg:self-start">
           {/* Media display: image or video player */}
           {media?.media_type === 'image' ? (
             <div className="flex w-full items-center justify-center bg-black">
@@ -1108,19 +1109,13 @@ export default function VideoDetailPage() {
 
       {/* Edit timestamp bottom sheet */}
       {editingTimestamp && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            onClick={() => setEditingTimestamp(null)}
-          />
-          <div className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl bg-white shadow-xl lg:inset-0 lg:m-auto lg:h-fit lg:max-w-md lg:rounded-2xl">
-            <div className="flex justify-center py-2">
-              <div className="h-1 w-10 rounded-full bg-gray-300 lg:hidden" />
-            </div>
-            <div className="px-4 pb-2">
-              <h3 className="text-lg font-semibold text-gray-900">Edit Timestamp</h3>
-            </div>
-            <div className="space-y-3 px-4 pb-6">
+        <BottomSheet
+          open
+          onClose={() => setEditingTimestamp(null)}
+          title="Edit Timestamp"
+          size="md"
+        >
+          <div className="space-y-3 px-4 pb-6">
               <div className="flex gap-3">
                 <div className="flex-1">
                   <label className="mb-1 block text-xs font-medium text-gray-500">
@@ -1177,44 +1172,40 @@ export default function VideoDetailPage() {
                   Update
                 </button>
               </div>
-            </div>
           </div>
-        </>
+        </BottomSheet>
       )}
 
       {/* Delete confirmation dialog */}
-      {showDeleteConfirm && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            onClick={() => setShowDeleteConfirm(false)}
-          />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-              <h3 className="text-lg font-semibold text-gray-900">Delete this video?</h3>
-              <p className="mt-2 text-sm text-gray-500">
-                This will permanently remove the video file and all its tags.
-              </p>
-              <div className="mt-6 flex gap-2">
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  disabled={deleting}
-                  className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm text-gray-600"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {deleting ? 'Deleting…' : 'Delete'}
-                </button>
-              </div>
-            </div>
+      <BottomSheet
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete this video?"
+        size="md"
+        dismissible={!deleting}
+      >
+        <div className="px-4 pb-6">
+          <p className="text-sm text-gray-500">
+            This will permanently remove the video file and all its tags.
+          </p>
+          <div className="mt-6 flex gap-2">
+            <button
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={deleting}
+              className="flex-1 rounded-lg border border-gray-200 py-2.5 text-sm text-gray-600"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
           </div>
-        </>
-      )}
+        </div>
+      </BottomSheet>
     </div>
   )
 }

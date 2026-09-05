@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- interactive-widget=resizes-content makes the on-screen keyboard shrink the
+         layout viewport, so bottom-anchored sheets sit above it instead of behind
+         it. Safari ignores it; useKeyboardInset covers that case in JS. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <title>Dance Library</title>
   </head>
   <body>
