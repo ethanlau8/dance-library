@@ -3,15 +3,21 @@ import { usePermissions } from '../hooks/usePermissions'
 import { useTagAdmin, type CategoryRow, type TagRow } from '../hooks/useTagAdmin'
 import BottomSheet from '../components/BottomSheet'
 import CategoryCombobox from '../components/CategoryCombobox'
+import {
+  CATEGORY_SORT_DEFAULT_DIR,
+  CATEGORY_SORT_LABELS,
+  TAG_SORT_DEFAULT_DIR,
+  TAG_SORT_LABELS,
+  nextCategorySort,
+  nextTagSort,
+  sortCategories,
+  sortTags,
+  type CategorySortKey,
+  type Sort,
+  type TagSortKey,
+} from '../lib/tagSort'
 
 type Tab = 'tags' | 'categories'
-type SortKey = 'name' | 'category' | 'usage'
-
-const SORT_LABELS: Record<SortKey, string> = {
-  name: 'Name',
-  category: 'Category',
-  usage: 'Most used',
-}
 
 export default function TagsPage() {
   const { can } = usePermissions()
@@ -35,7 +41,11 @@ export default function TagsPage() {
 
   const [tab, setTab] = useState<Tab>('tags')
   const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('name')
+  const [tagSort, setTagSort] = useState<Sort<TagSortKey>>({ key: 'name', dir: 'asc' })
+  const [categorySort, setCategorySort] = useState<Sort<CategorySortKey>>({
+    key: 'name',
+    dir: 'asc',
+  })
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -59,29 +69,16 @@ export default function TagsPage() {
       )
     })
 
-    return filtered.sort((a, b) => {
-      if (sortKey === 'usage') {
-        if (b.media_count !== a.media_count) return b.media_count - a.media_count
-        return a.name.localeCompare(b.name)
-      }
-      if (sortKey === 'category') {
-        const byCat = a.category_name.localeCompare(b.category_name)
-        if (byCat !== 0) return byCat
-        return a.name.localeCompare(b.name)
-      }
-      return a.name.localeCompare(b.name)
-    })
-  }, [tags, search, sortKey, categoryFilter])
+    return sortTags(filtered, tagSort)
+  }, [tags, search, tagSort, categoryFilter])
 
   const visibleCategories = useMemo(() => {
     const q = search.trim().toLowerCase()
     const filtered = q
       ? categories.filter((c) => c.name.toLowerCase().includes(q))
       : categories
-    return [...filtered].sort((a, b) =>
-      sortKey === 'usage' ? b.tag_count - a.tag_count : a.name.localeCompare(b.name)
-    )
-  }, [categories, search, sortKey])
+    return sortCategories(filtered, categorySort)
+  }, [categories, search, categorySort])
 
   // Selection is drawn from every tag, not just the visible ones, so a user can
   // search, select, search again and select more before acting on the lot. The
@@ -197,19 +194,56 @@ export default function TagsPage() {
                 ))}
               </select>
             )}
+            {/* Mirrors the column headers, which are desktop-only — this is the
+                only way to sort on a phone, and the discoverable one anywhere. */}
             <select
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as SortKey)}
+              value={tab === 'tags' ? tagSort.key : categorySort.key}
+              onChange={(e) => {
+                // Picking a column from the list sets it outright. Reversing is
+                // the arrow button's job, so this must not toggle.
+                if (tab === 'tags') {
+                  const key = e.target.value as TagSortKey
+                  setTagSort({ key, dir: TAG_SORT_DEFAULT_DIR[key] })
+                } else {
+                  const key = e.target.value as CategorySortKey
+                  setCategorySort({ key, dir: CATEGORY_SORT_DEFAULT_DIR[key] })
+                }
+              }}
+              aria-label="Sort by"
               className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-700 focus:border-blue-500 focus:outline-none sm:flex-none"
             >
-              {(Object.keys(SORT_LABELS) as SortKey[])
-                .filter((k) => tab === 'tags' || k !== 'category')
-                .map((k) => (
-                  <option key={k} value={k}>
-                    Sort: {tab === 'categories' && k === 'usage' ? 'Most tags' : SORT_LABELS[k]}
-                  </option>
-                ))}
+              {tab === 'tags'
+                ? (Object.keys(TAG_SORT_LABELS) as TagSortKey[]).map((k) => (
+                    <option key={k} value={k}>
+                      Sort: {TAG_SORT_LABELS[k]}
+                    </option>
+                  ))
+                : (Object.keys(CATEGORY_SORT_LABELS) as CategorySortKey[]).map((k) => (
+                    <option key={k} value={k}>
+                      Sort: {CATEGORY_SORT_LABELS[k]}
+                    </option>
+                  ))}
             </select>
+            <button
+              onClick={() =>
+                tab === 'tags'
+                  ? setTagSort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))
+                  : setCategorySort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))
+              }
+              title={
+                (tab === 'tags' ? tagSort.dir : categorySort.dir) === 'asc'
+                  ? 'Ascending — click for descending'
+                  : 'Descending — click for ascending'
+              }
+              aria-label={`Sort direction: ${
+                (tab === 'tags' ? tagSort.dir : categorySort.dir) === 'asc'
+                  ? 'ascending'
+                  : 'descending'
+              }. Activate to reverse.`}
+              className="shrink-0 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              {(tab === 'tags' ? tagSort.dir : categorySort.dir) === 'asc' ? '↑' : '↓'}
+            </button>
           </div>
         </div>
       </div>
@@ -241,11 +275,15 @@ export default function TagsPage() {
           onToggleFolder={(tag) =>
             run(() => setFolder.mutateAsync({ id: tag.id, isFolder: !tag.is_folder }))
           }
+          sort={tagSort}
+          onSort={(key) => setTagSort((s) => nextTagSort(s, key))}
         />
       ) : (
         <CategoryTable
           rows={visibleCategories}
           canEdit={canEdit}
+          sort={categorySort}
+          onSort={(key) => setCategorySort((s) => nextCategorySort(s, key))}
           onRename={setEditingCategory}
           onDelete={setDeletingCategory}
           onShowTags={(category) => {
@@ -373,6 +411,44 @@ const ROW_GRID =
   'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 ' +
   'md:grid-cols-[auto_minmax(0,2fr)_minmax(0,2fr)_11rem_4.5rem_auto]'
 
+/**
+ * A clickable column heading. The arrow shows only on the active column, so the
+ * table always states exactly one sort rather than hinting at four.
+ */
+function SortHeader<K extends string>({
+  label,
+  columnKey,
+  sort,
+  onSort,
+  align = 'left',
+}: {
+  label: string
+  columnKey: K
+  sort: Sort<K>
+  onSort: (key: K) => void
+  align?: 'left' | 'right'
+}) {
+  const active = sort.key === columnKey
+  const ascending = sort.dir === 'asc'
+
+  return (
+    <button
+      onClick={() => onSort(columnKey)}
+      aria-label={
+        active
+          ? `${label}, sorted ${ascending ? 'ascending' : 'descending'}. Activate to reverse.`
+          : `Sort by ${label}`
+      }
+      className={`flex items-center gap-1 text-xs font-medium uppercase tracking-wider transition-colors hover:text-gray-700 ${
+        align === 'right' ? 'justify-end' : ''
+      } ${active ? 'text-gray-700' : 'text-gray-400'}`}
+    >
+      <span className="truncate">{label}</span>
+      {active && <span aria-hidden>{ascending ? '▲' : '▼'}</span>}
+    </button>
+  )
+}
+
 function TagTable({
   rows,
   categories,
@@ -386,6 +462,8 @@ function TagTable({
   onDelete,
   onChangeCategory,
   onToggleFolder,
+  sort,
+  onSort,
 }: {
   rows: TagRow[]
   categories: CategoryRow[]
@@ -399,6 +477,8 @@ function TagTable({
   onDelete: (tag: TagRow) => void
   onChangeCategory: (tag: TagRow, categoryId: string) => void
   onToggleFolder: (tag: TagRow) => void
+  sort: Sort<TagSortKey>
+  onSort: (key: TagSortKey) => void
 }) {
   if (rows.length === 0) {
     return <p className="py-12 text-center text-sm text-gray-400">No tags found</p>
@@ -421,10 +501,10 @@ function TagTable({
             />
           )}
         </span>
-        <span>Name</span>
-        <span>Description</span>
-        <span>Category</span>
-        <span className="text-right">Used</span>
+        <SortHeader label="Name" columnKey="name" sort={sort} onSort={onSort} />
+        <SortHeader label="Description" columnKey="description" sort={sort} onSort={onSort} />
+        <SortHeader label="Category" columnKey="category" sort={sort} onSort={onSort} />
+        <SortHeader label="Used" columnKey="usage" sort={sort} onSort={onSort} align="right" />
         <span />
       </div>
 
@@ -529,12 +609,16 @@ function TagTable({
 function CategoryTable({
   rows,
   canEdit,
+  sort,
+  onSort,
   onRename,
   onDelete,
   onShowTags,
 }: {
   rows: CategoryRow[]
   canEdit: boolean
+  sort: Sort<CategorySortKey>
+  onSort: (key: CategorySortKey) => void
   onRename: (category: CategoryRow) => void
   onDelete: (category: CategoryRow) => void
   onShowTags: (category: CategoryRow) => void
@@ -545,9 +629,9 @@ function CategoryTable({
 
   return (
     <div className="px-4">
-      <div className="hidden grid-cols-[minmax(0,1fr)_6rem_auto] items-center gap-3 border-b border-gray-200 py-2 text-xs font-medium uppercase tracking-wider text-gray-400 md:grid">
-        <span>Name</span>
-        <span className="text-right">Tags</span>
+      <div className="hidden grid-cols-[minmax(0,1fr)_6rem_auto] items-center gap-3 border-b border-gray-200 py-2 md:grid">
+        <SortHeader label="Name" columnKey="name" sort={sort} onSort={onSort} />
+        <SortHeader label="Tags" columnKey="tags" sort={sort} onSort={onSort} align="right" />
         <span />
       </div>
 

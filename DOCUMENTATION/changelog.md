@@ -1,5 +1,34 @@
 # Changelog
 
+## [2026-09-05] - Sortable Columns on the Tags Table
+**Type**: Feature
+
+**Context**: The Tags table shipped with a fixed three-option sort dropdown (name / category / most used) and no way to reverse any of them. With 131 tags the useful questions are directional — *which tags are unused*, *which carry the library* — and half of them were unreachable.
+
+**Changed**:
+- `WEBSITE/src/lib/tagSort.ts` (new): comparators, labels, per-column default directions, and the click-to-next-sort transition. Kept out of the component so the ordering rules are unit-testable, and generic over minimal row shapes so `lib` does not depend on hook types.
+- `WEBSITE/src/lib/tagSort.test.ts` (new): 13 tests covering the two non-obvious rules below plus numeric-vs-lexicographic ordering and input immutability.
+- `WEBSITE/src/pages/TagsPage.tsx`: every column heading is a `SortHeader` button; separate sort state per tab; the toolbar dropdown gained a direction toggle beside it.
+- `DOCUMENTATION/ux-design.md`: §14 sort behaviour rewritten.
+
+**Decisions worth keeping**:
+- **Per-column default direction.** A fresh text column opens ascending, a fresh count column descending. Opening *Used* ascending would land on the 60 tags used by nothing.
+- **Empty descriptions sort last in both directions.** 126 of 131 tags have no description; letting blanks flip to the top would make one direction of that column show nothing but dashes. Direction orders only the rows that have one.
+- **Ties break on name → category → id.** Tag names are unique only within a category — 7 names currently exist in two categories at once — so name alone leaves pairs unordered and the table reshuffles when an unrelated row changes.
+- Only the active column renders an arrow, so the header row states one sort rather than hinting at four.
+
+**Not included**: sorting by folder status. The folder toggle shares a cell with edit/delete and has no heading of its own, so it would have been a dropdown option with no matching clickable column.
+
+**Testing**:
+- [ ] Click each heading — sorts by it; clicking again reverses; only that column shows an arrow
+- [ ] *Used* opens descending on first click, *Name* opens ascending
+- [ ] Sort by Description both ways — blank rows stay at the bottom in both
+- [ ] Toolbar dropdown and headings stay in sync; the ↑/↓ button reverses without changing the column
+- [ ] Switch tabs — each tab keeps its own sort
+- [ ] On a phone (no headings) the dropdown plus direction button still reach every ordering
+
+---
+
 ## [2026-09-04] - Layout Clipping, Keyboard-Aware Sheets, Tag Management Rebuild
 **Type**: Fix + Feature
 

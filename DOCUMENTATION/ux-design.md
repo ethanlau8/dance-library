@@ -848,9 +848,9 @@ The screen is a **table with two tabs**, not a category-grouped list. A grouped 
 ┌────────────────────────────────────────────────────────┐
 │  [ Tags 87 ] [ Categories 6 ]              [+ New Tag] │
 │  🔍 Search name, description, category…                │
-│  [All categories ▾]  [Sort: Name ▾]                    │
+│  [All categories ▾]  [Sort: Used ▾] [↓]                │
 ├────────────────────────────────────────────────────────┤
-│ ☐  NAME           DESCRIPTION      CATEGORY   USED     │
+│ ☐  NAME           DESCRIPTION      CATEGORY   USED ▼   │
 │ ☑  bachata        dominican…      [Style  ▾]    42  📁✎×│
 │ ☑  zouk           brazilian…      [Style  ▾]    18    ✎×│
 │ ☐  copa           —               [Move   ▾]     7    ✎×│
@@ -866,7 +866,16 @@ The screen is a **table with two tabs**, not a category-grouped list. A grouped 
 
 **Columns (Tags):** name, description, category, and **usage count** — how many videos carry the tag. Usage is the signal that makes a large vocabulary legible: it separates a tag doing real work from a typo applied once.
 
-**Sort:** by name, by category, or by most used. On the Categories tab, by name or by most tags.
+**Sort:** every column is sortable in both directions. Click a column heading to sort by it; click the active heading again to reverse. Only the active column shows an arrow, so the table always states exactly one sort rather than hinting at four. The Categories tab sorts by name or by tag count the same way.
+
+Headings are desktop-only, so the toolbar carries a *Sort:* dropdown and a direction toggle that do the same job — these are the only way to sort on a phone, and the discoverable route anywhere. Choosing a column from the dropdown sets it outright; reversing is the arrow button's job.
+
+Two sort details are deliberate rather than incidental:
+
+- **A new column opens in the direction you actually want.** Text columns start A→Z, but counts start high-first — opening *Used* ascending would land on the 60-odd tags used by nothing.
+- **Tags with no description sort last in *both* directions.** Nearly every tag lacks one, so letting the blanks flip to the top would make one of that column's two directions show nothing but dashes. The direction orders only the rows that have a description.
+
+Ties break on name, then category, then id. Tag names are unique only *within* a category, so name alone cannot order every pair — without the full chain, rows tied on a count would visibly reshuffle whenever an unrelated row changed.
 
 **Search:** filters on name, description, *and* category name, so `style` finds everything in that category without changing the category filter.
 
