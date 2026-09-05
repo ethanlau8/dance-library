@@ -153,6 +153,20 @@ Tracks per-user, per-video playback position for the Continue Watching feature.
 
 **Constraints:** `UNIQUE(user_id, media_id)` — one progress record per user per media item. Updates are upserts.
 
+### tag_usage_counts (view)
+
+How many media items each tag is applied to. Read by the Tags screen, where it is the signal that separates a tag doing real work from one applied once.
+
+| Column | Type | Description |
+|---|---|---|
+| `tag_id` | UUID | The tag |
+| `media_count` | BIGINT | Distinct media items carrying the tag |
+
+**Notes:**
+- `COUNT(DISTINCT media_id)`, not a plain count: a tag can appear on the same item several times as separate timestamp ranges, and the useful number is "on how many videos".
+- Declared `WITH (security_invoker = true)` so it runs as the caller and the existing `view_media`-gated RLS on `tags` and `media_tags` applies unchanged. Without it a view runs as its owner and would leak rows past RLS. Verified against production: an unauthenticated anon key reads `[]`, not the whole table.
+- Every tag gets a row, including unused ones — the `LEFT JOIN` yields `0` rather than omitting them, so clients can rely on the view covering the full vocabulary.
+
 ### Client-side storage (localStorage)
 
 The following data is stored in the browser's localStorage rather than in the database:
@@ -257,6 +271,8 @@ If the user has no profile or no role (`role_id` is null), no permissions are gr
 |---|---|
 | SELECT | Users with `view_media` can read all categories. |
 | INSERT | Users with `create_tags` can insert. |
+| UPDATE | Users with `create_tags` can rename. |
+| DELETE | Users with `create_tags` can delete. |
 
 #### tags
 
@@ -264,7 +280,14 @@ If the user has no profile or no role (`role_id` is null), no permissions are gr
 |---|---|
 | SELECT | Users with `view_media` can read all tags. |
 | INSERT | Users with `create_tags` can insert. |
-| UPDATE (`is_folder`) | Users with `manage_folders` can update. |
+| UPDATE | Users with `create_tags` **or** `manage_folders` pass the policy. Which columns they may actually change is then enforced by the `enforce_tag_update_permissions` trigger: `is_folder` requires `manage_folders`; `name`, `description`, and `category_id` require `create_tags`. A caller without the needed permission gets a `42501` error. |
+| DELETE | Users with `create_tags` can delete. |
+
+> RLS policies cannot be restricted to individual columns, so a policy named for
+> one column still governs every update to the table. Wherever a table needs a
+> per-column permission split, the policy admits the union of the permissions and
+> a `BEFORE UPDATE` trigger — which can compare `OLD` and `NEW` — enforces the
+> split. See migration `20240108000000_tag_management.sql`.
 
 #### media_tags
 

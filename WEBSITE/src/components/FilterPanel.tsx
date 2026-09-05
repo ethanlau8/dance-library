@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { queryKeys } from '../lib/queryKeys'
+import BottomSheet from './BottomSheet'
 import type { TagMode } from '../hooks/useMedia'
 import type { Tag } from '../types'
 
@@ -33,6 +34,7 @@ export default function FilterPanel({
   const [selectedTagIds, setSelectedTagIds] = useState<Set<string>>(new Set())
   const [selectedTagMode, setSelectedTagMode] = useState<TagMode>('and')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  const [tagSearch, setTagSearch] = useState('')
   const [dateFrom, setDateFrom] = useState<string>('')
   const [dateTo, setDateTo] = useState<string>('')
   const [selectedMediaType, setSelectedMediaType] = useState<string | null>(null)
@@ -64,18 +66,23 @@ export default function FilterPanel({
     setDateTo(activeDateRange.to ?? '')
     setSelectedMediaType(activeMediaType)
     setExpandedCategories(new Set())
+    setTagSearch('')
   }, [isOpen, activeTags, activeTagMode, activeDateRange, activeMediaType])
 
-  // Group tags by category
+  // Group tags by category, dropping categories with nothing matching the search.
   const groupedTags = useMemo(() => {
+    const q = tagSearch.trim().toLowerCase()
     const groups: Record<string, TagWithCategory[]> = {}
     for (const tag of allTags) {
+      if (q && !tag.name.toLowerCase().includes(q)) continue
       const cat = tag.category_name
       if (!groups[cat]) groups[cat] = []
       groups[cat].push(tag)
     }
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
-  }, [allTags])
+  }, [allTags, tagSearch])
+
+  const isSearching = tagSearch.trim().length > 0
 
   function toggleTag(tag: TagWithCategory) {
     setSelectedTagIds((prev) => {
@@ -123,38 +130,39 @@ export default function FilterPanel({
     onClose()
   }
 
-  if (!isOpen) return null
-
   return (
-    <>
-      {/* Dimmed backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/50"
-        onClick={onClose}
-      />
-
-      {/* Bottom sheet */}
-      <div
-        className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85vh] flex-col rounded-t-2xl bg-white shadow-xl transition-transform duration-300 lg:inset-0 lg:m-auto lg:h-fit lg:max-w-lg lg:rounded-2xl"
-      >
-        {/* Handle bar (mobile only) */}
-        <div className="flex justify-center py-2 lg:hidden">
-          <div className="h-1 w-10 rounded-full bg-gray-300" />
+    <BottomSheet
+      open={isOpen}
+      onClose={onClose}
+      title="Filters"
+      headerAction={
+        <button onClick={handleClear} className="text-sm text-blue-600">
+          Clear
+        </button>
+      }
+      subheader={
+        <div className="border-b border-gray-100 px-4 pb-3">
+          <input
+            type="text"
+            placeholder="Search tags…"
+            value={tagSearch}
+            onChange={(e) => setTagSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          />
         </div>
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 pb-3 lg:pt-4">
-          <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+      }
+      footer={
+        <div className="px-4 py-3">
           <button
-            onClick={handleClear}
-            className="text-sm text-blue-600"
+            onClick={handleApply}
+            className="w-full rounded-lg bg-blue-600 py-3 text-sm font-medium text-white active:bg-blue-700"
           >
-            Clear
+            Apply Filters
           </button>
         </div>
-
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4">
+      }
+    >
+      <div className="px-4 pb-4">
           {loading ? (
             <div className="flex justify-center py-8">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900" />
@@ -190,11 +198,25 @@ export default function FilterPanel({
                 </div>
               </div>
 
+              {isSearching && groupedTags.length === 0 && (
+                <p className="mb-4 py-6 text-center text-sm text-gray-400">
+                  No tags match &ldquo;{tagSearch.trim()}&rdquo;
+                </p>
+              )}
+
               {/* Tag categories */}
               {groupedTags.map(([category, tags]) => {
-                const isExpanded = expandedCategories.has(category)
-                const visibleTags = isExpanded ? tags : tags.slice(0, TAGS_VISIBLE_PER_CATEGORY)
-                const hiddenCount = tags.length - TAGS_VISIBLE_PER_CATEGORY
+                // Selected tags sort first so a collapsed category never hides an
+                // active filter the user would then be unable to clear from here.
+                const ordered = [...tags].sort(
+                  (a, b) =>
+                    Number(selectedTagIds.has(b.id)) - Number(selectedTagIds.has(a.id))
+                )
+                const isExpanded = isSearching || expandedCategories.has(category)
+                const visibleTags = isExpanded
+                  ? ordered
+                  : ordered.slice(0, TAGS_VISIBLE_PER_CATEGORY)
+                const hiddenCount = ordered.length - TAGS_VISIBLE_PER_CATEGORY
 
                 return (
                   <div key={category} className="mb-4">
@@ -281,18 +303,7 @@ export default function FilterPanel({
               </div>
             </>
           )}
-        </div>
-
-        {/* Apply button */}
-        <div className="border-t border-gray-100 px-4 py-3">
-          <button
-            onClick={handleApply}
-            className="w-full rounded-lg bg-blue-600 py-3 text-sm font-medium text-white active:bg-blue-700"
-          >
-            Apply Filters
-          </button>
-        </div>
       </div>
-    </>
+    </BottomSheet>
   )
 }

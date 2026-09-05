@@ -1,5 +1,60 @@
 # Changelog
 
+## [2026-09-04] - Layout Clipping, Keyboard-Aware Sheets, Tag Management Rebuild
+**Type**: Fix + Feature
+
+**Context**: A review of the app's visual behaviour found three problems with one root cause each, plus a tag vocabulary that had outgrown its screen.
+
+### 1. Four pages were clipped, not scrollable
+
+`Layout.tsx` set `overflow-y-hidden` on `<main>` in dd100dc so HomePage and FolderPage could own an internal scroll region. Those two were converted; TagsPage, AdminPage, UploadPage, and VideoDetailPage were not — they still render ordinary document-flow roots. Because a flex item with non-visible overflow has its automatic minimum size collapsed to zero, `main` was pinned to `100vh - 56px` and clipped anything longer, with no scrollbar. Those pages also kept `sticky top-14` headers whose offset was measured against a container that no longer scrolled.
+
+**Changed**:
+- `WEBSITE/src/components/Layout.tsx`: `main` is now `overflow-y-auto`. Pages with their own scrollers still fill it exactly via `flex-1` and never overflow it, so nothing nests.
+- `WEBSITE/src/pages/TagsPage.tsx`, `AdminPage.tsx`: sticky headers `top-14` → `top-0` (the scrollport now starts below the fixed header).
+- `WEBSITE/src/pages/VideoDetailPage.tsx`: desktop sticky player `lg:top-14` → `lg:top-0`.
+
+### 2. The on-screen keyboard covered every bottom sheet
+
+Sheets are `fixed bottom-0`, which anchors to the *layout* viewport. The tag picker autofocuses its search field and the create-tag form's category suggestion list was `absolute top-full` — both landed exactly where the keyboard opens.
+
+**Changed**:
+- `WEBSITE/index.html`: viewport meta gains `interactive-widget=resizes-content`.
+- `WEBSITE/src/hooks/useKeyboardInset.ts` (new): measures `innerHeight - (visualViewport.height + offsetTop)`, which is 0 where the browser honours `resizes-content` and the keyboard height where it does not — so it never double-counts.
+- `WEBSITE/src/components/BottomSheet.tsx` (new): shared sheet — backdrop, drag handle, header/subheader/scroll body/footer, Escape to dismiss, desktop centred dialog, and the keyboard inset applied to both `bottom` and `max-height`. Replaces seven hand-rolled copies in TagPicker (×2), FilterPanel, TagsPage (×2), and VideoDetailPage (×2).
+- `WEBSITE/src/components/CategoryCombobox.tsx` (new): renders suggestions **in flow** instead of absolutely positioned, so they cannot be covered by the keyboard or clipped by the sheet's scrollport. The list collapses once the text names a category exactly, which removes the outside-click listener the old version needed.
+
+### 3. Tag renames silently failed for Editors
+
+The only UPDATE policy on `tags` was `tags_update_is_folder`, requiring `manage_folders`. RLS cannot be scoped to a column, so that policy governed *every* update — including the name/description edits the UI offers to anyone with `create_tags`. The seeded Editor role has `create_tags` but not `manage_folders`, so those updates matched zero rows; PostgREST reports that as success, so the UI showed the edit as saved and it reverted on reload.
+
+**Changed**:
+- `SUPABASE/supabase/migrations/20240108000000_tag_management.sql` (new, part 1): policy admits `create_tags OR manage_folders`; an `enforce_tag_update_permissions` BEFORE UPDATE trigger enforces the actual column split (`is_folder` → `manage_folders`; `name`/`description`/`category_id` → `create_tags`) and raises `42501` instead of no-oping.
+- `WEBSITE/src/hooks/useTagAdmin.ts` (new): every write uses `.select()` and asserts a row came back, so an RLS-blocked write surfaces as an error rather than a fake success.
+
+### 4. Tag management rebuilt as a two-tab table
+
+**Changed**:
+- `SUPABASE/supabase/migrations/20240108000000_tag_management.sql` (part 2): `tag_usage_counts` view (`security_invoker`) giving each tag a distinct-media count.
+- `WEBSITE/src/hooks/useTagAdmin.ts` (new): all tag/category reads and writes, on TanStack Query. TagsPage previously bypassed it with raw `supabase` + `useState`.
+- `WEBSITE/src/pages/TagsPage.tsx`: rewritten. `Tags` tab is a sortable table (name / description / category dropdown / usage count / folder) with multi-select and bulk move + delete; `Categories` tab makes categories first-class rows that can be renamed and deleted with an explicit choice for their tags. Categories are no longer auto-deleted when their last tag goes.
+- `WEBSITE/src/components/FilterPanel.tsx`: added a tag search field, and selected tags now sort first within a category so a collapsed `+N more` can never hide an active filter the user then cannot clear.
+- `WEBSITE/src/lib/matchCategory.ts` (+ test): exact, case- and whitespace-insensitive category matching, shared by the combobox and the create flows.
+
+**Migrations**: `20240108000000_tag_management.sql` must be applied before the Tags screen works — the usage-count column reads a view that does not exist yet, and category moves are rejected until the policy lands.
+
+**Testing**:
+- [ ] **Scrolling**: Tags, Admin, Upload, and a long Video Detail page all scroll to the bottom; sticky headers sit flush under the top bar
+- [ ] **Keyboard**: on a phone, open the tag picker — the search field and list stay above the keyboard; open Create Tag and focus Category — the suggestion list is visible
+- [ ] **Rename as Editor**: rename a tag with an Editor account, reload — the new name persists (previously reverted)
+- [ ] **Move category**: change a tag's category from the table dropdown; moving into a category that already has that name reports a conflict
+- [ ] **Bulk move**: select tags across two different searches, move them together — all selected move, and the delete sheet lists them by name
+- [ ] **Usage counts**: counts match the number of videos each tag is on
+- [ ] **Delete category**: with tags, both "move them to…" and "delete the tags too" behave as described; an empty category survives until deleted explicitly
+- [ ] **Permissions**: a Viewer sees the table with no checkboxes or action buttons
+
+---
+
 ## [2026-05-13 ~9:00 PM] - AND/OR Tag Filter Mode Toggle
 **Type**: Feature
 

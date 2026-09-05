@@ -17,6 +17,10 @@ export const queryKeys = {
     all: ['tags'] as const,
     withCategories: () => ['tags', 'withCategories'] as const,
     byIds: (ids: string[]) => ['tags', 'byIds', ids] as const,
+    usageCounts: () => ['tags', 'usageCounts'] as const,
+  },
+  tagCategories: {
+    all: ['tagCategories'] as const,
   },
   mediaTags: {
     byMedia: (mediaId: string) => ['mediaTags', mediaId] as const,

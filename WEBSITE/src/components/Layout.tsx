@@ -76,8 +76,15 @@ export default function Layout({ children }: { children: ReactNode }) {
         </>
       )}
 
-      {/* Content */}
-      <main className="mx-auto mt-14 flex w-full max-w-6xl flex-1 flex-col overflow-x-hidden overflow-y-hidden">
+      {/* Content.
+          `main` is the app's scrollport. Pages that manage their own internal
+          scrolling (HomePage, FolderPage) fill it exactly via `flex-1` and never
+          overflow it; pages that lay out as ordinary documents (Tags, Admin,
+          Upload, VideoDetail) grow past it and scroll here. It must not be
+          `overflow-y-hidden` — with a non-visible overflow the flex item's
+          automatic minimum size collapses to zero, pinning `main` to the
+          viewport height and silently clipping every document-flow page. */}
+      <main className="mx-auto mt-14 flex w-full max-w-6xl flex-1 flex-col overflow-x-hidden overflow-y-auto">
         {children}
       </main>
     </div>

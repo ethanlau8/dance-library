@@ -93,7 +93,7 @@ export default function AdminPage() {
   return (
     <div className="pb-8">
       {/* Tabs */}
-      <div className="sticky top-14 z-20 flex border-b border-gray-200 bg-white">
+      <div className="sticky top-0 z-20 flex border-b border-gray-200 bg-white">
         <button
           onClick={() => setTab('users')}
           className={`flex-1 py-3 text-center text-sm font-medium transition-colors ${
